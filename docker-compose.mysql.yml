@@ -1,0 +1,26 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: csu_mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: csu_db
+      MYSQL_USER: csu_admin
+      MYSQL_PASSWORD: "${MYSQL_USER_PASSWORD}"
+    command: >
+      --innodb_buffer_pool_size=64M
+      --performance_schema=OFF
+      --max_connections=20
+      --innodb_log_buffer_size=8M
+      --innodb_redo_log_capacity=32M
+      --table_open_cache=64
+      --thread_cache_size=4
+      --key_buffer_size=8M
+    volumes:
+      - csu_mysql_data:/var/lib/mysql
+volumes:
+  csu_mysql_data:
+    driver: local

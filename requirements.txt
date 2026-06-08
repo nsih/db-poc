@@ -1,0 +1,8 @@
+streamlit
+sqlalchemy
+pymysql
+pandas
+sqlparse
+requests
+pymupdf
+pymupdf4llm
