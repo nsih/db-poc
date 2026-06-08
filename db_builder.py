@@ -16,13 +16,13 @@ from sqlalchemy.engine import Engine
 logger = logging.getLogger(__name__)
 
 
-# ── 예외 ─────────────────────────────────────────────────────────────────────
+#  예외
 
 class DbBuilderError(Exception):
     pass
 
 
-# ── 설정 로드 ─────────────────────────────────────────────────────────────────
+#  설정 로드
 
 def _load_secrets() -> dict:
     path = Path(__file__).parent / ".streamlit" / "secrets.toml"
@@ -30,7 +30,7 @@ def _load_secrets() -> dict:
         return tomllib.load(f)
 
 
-# ── 연결 ─────────────────────────────────────────────────────────────────────
+#  연결
 
 def get_engine() -> Engine:
     """secrets.toml의 DB 개별 파라미터로 SQLAlchemy 엔진 생성.
@@ -61,7 +61,7 @@ def get_engine() -> Engine:
         raise DbBuilderError(f"DB 연결 실패: {e}")
 
 
-# ── Introspection ─────────────────────────────────────────────────────────────
+#  Introspection
 
 def list_tables(engine: Engine) -> list[str]:
     """DB에 존재하는 테이블 목록 반환."""
@@ -139,7 +139,7 @@ def get_schema_prompt(engine: Engine,
     return "\n".join(parts).strip()
 
 
-# ── SQL 가드 ──────────────────────────────────────────────────────────────────
+#  SQL 가드
 
 # 위험 구문 패턴
 _DANGEROUS_PATTERNS = re.compile(
@@ -222,7 +222,7 @@ def add_limit(sql: str, limit: int = 20000) -> str:
     return f"{sql_stripped} LIMIT {limit}"
 
 
-# ── 실행 ─────────────────────────────────────────────────────────────────────
+#  실행
 
 def run_select(engine: Engine, sql: str, limit: int = 20000) -> pd.DataFrame:
     """guard(allow_write=False) → add_limit → 실행 → DataFrame 반환."""
@@ -274,7 +274,7 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
         raise DbBuilderError(f"쓰기 실행 실패: {e}")
 
 
-# ── LLM 호출 (NL2SQL) ────────────────────────────────────────────────────────
+#  LLM 호출 (NL2SQL)
 
 _NL2SQL_SYSTEM = (
     "당신은 MySQL 전문가입니다. "
@@ -344,7 +344,7 @@ def generate_sql(user_question: str, schema_prompt: str,
     return sql
 
 
-# ── PDF 표 → 적재 ─────────────────────────────────────────────────────────────
+#  PDF 표 → 적재
 
 def parse_markdown_tables(md_text: str) -> list[pd.DataFrame]:
     """마크다운에서 표를 추출해 DataFrame 리스트로 반환.
@@ -469,3 +469,90 @@ def load_dataframe(engine: Engine, df: pd.DataFrame,
         return count
     except Exception as e:
         raise DbBuilderError(f"테이블 적재 실패 ({table}): {e}")
+
+
+#  인라인 편집 → UPDATE 생성
+
+def diff_dataframes(original: pd.DataFrame,
+                    edited: pd.DataFrame) -> pd.DataFrame:
+    """원본과 편집본을 비교해 변경된 행만 반환.
+
+    반환 DataFrame의 인덱스는 original과 동일하게 유지된다.
+    행 추가/삭제는 무시하고 셀 값 변경만 감지한다.
+    """
+    if original.shape != edited.shape:
+        # 행/컬럼 수가 다르면 셀 단위 비교 불가 — 빈 DataFrame 반환
+        return pd.DataFrame()
+
+    # 값이 하나라도 다른 행의 마스크
+    changed_mask = ~(original.astype(str) == edited.astype(str)).all(axis=1)
+    return edited[changed_mask]
+
+
+def build_update_sqls(original: pd.DataFrame,
+                      edited: pd.DataFrame,
+                      table: str) -> list[dict]:
+    """변경된 행마다 UPDATE SQL을 생성한다.
+
+    Args:
+        original : 편집 전 DataFrame (run_select 반환값).
+        edited   : 편집 후 DataFrame (st.data_editor 반환값).
+        table    : 대상 테이블명.
+
+    Returns:
+        list of {"sql": str, "warning": str | None}
+        warning이 있으면 중복 행 등 주의 필요한 케이스.
+
+    Raises:
+        DbBuilderError: 컬럼 구조 불일치 시.
+    """
+    if list(original.columns) != list(edited.columns):
+        raise DbBuilderError("원본과 편집본의 컬럼 구조가 다릅니다.")
+
+    if original.shape[0] != edited.shape[0]:
+        raise DbBuilderError("행 수가 다릅니다. 행 추가/삭제는 지원하지 않습니다.")
+
+    cols = list(original.columns)
+    results = []
+
+    for idx in original.index:
+        orig_row = original.loc[idx]
+        edit_row = edited.loc[idx]
+
+        # 변경 없는 행 스킵
+        if (orig_row.astype(str) == edit_row.astype(str)).all():
+            continue
+
+        # SET 절 — 변경된 컬럼만
+        set_parts = []
+        for col in cols:
+            if str(orig_row[col]) != str(edit_row[col]):
+                val = edit_row[col]
+                if pd.isna(val):
+                    set_parts.append(f"`{col}` = NULL")
+                else:
+                    escaped = str(val).replace("'", "''")
+                    set_parts.append(f"`{col}` = '{escaped}'")
+
+        # WHERE 절 — 원본 행의 모든 컬럼으로 특정
+        where_parts = []
+        for col in cols:
+            val = orig_row[col]
+            if pd.isna(val):
+                where_parts.append(f"`{col}` IS NULL")
+            else:
+                escaped = str(val).replace("'", "''")
+                where_parts.append(f"`{col}` = '{escaped}'")
+
+        sql = (f"UPDATE `{table}` "
+               f"SET {', '.join(set_parts)} "
+               f"WHERE {' AND '.join(where_parts)}")
+
+        # 중복 행 경고 — 원본에서 동일한 행이 2개 이상이면 WHERE가 복수 행을 건드림
+        dup_count = (original.astype(str) == orig_row.astype(str)).all(axis=1).sum()
+        warning = f"원본에 동일한 행이 {dup_count}개 존재 — WHERE 조건이 복수 행에 적용될 수 있습니다." \
+            if dup_count > 1 else None
+
+        results.append({"sql": sql, "warning": warning})
+
+    return results
