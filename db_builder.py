@@ -212,7 +212,7 @@ def guard_sql(sql: str, allow_write: bool) -> None:
             raise DbBuilderError("조회 경로에서는 SELECT만 허용됩니다.")
 
 
-def add_limit(sql: str, limit: int = 200) -> str:
+def add_limit(sql: str, limit: int = 20000) -> str:
     """SELECT에 LIMIT이 없으면 강제 주입. 4GB fetchall OOM 방어."""
     sql_stripped = sql.rstrip().rstrip(";")
     if classify_sql(sql) != "select":
@@ -224,7 +224,7 @@ def add_limit(sql: str, limit: int = 200) -> str:
 
 # ── 실행 ─────────────────────────────────────────────────────────────────────
 
-def run_select(engine: Engine, sql: str, limit: int = 200) -> pd.DataFrame:
+def run_select(engine: Engine, sql: str, limit: int = 20000) -> pd.DataFrame:
     """guard(allow_write=False) → add_limit → 실행 → DataFrame 반환."""
     guard_sql(sql, allow_write=False)
     safe_sql = add_limit(sql, limit)
@@ -361,21 +361,27 @@ def parse_markdown_tables(md_text: str) -> list[pd.DataFrame]:
     )
     matches = table_pattern.findall(md_text)
 
+    def _clean_cell(s: str) -> str:
+        """마크다운 볼드/이탤릭 기호 제거 후 공백 정리."""
+        s = re.sub(r'\*{1,3}', '', s)   # *** ** *
+        s = re.sub(r'_{1,3}', '', s)    # ___ __ _
+        return s.strip()
+
     for match in matches:
         try:
             lines = [l.strip() for l in match.strip().split('\n') if l.strip()]
             if len(lines) < 2:
                 continue
 
-            # 헤더
-            headers = [h.strip() for h in lines[0].split('|') if h.strip()]
+            # 헤더 — 볼드 기호 제거
+            headers = [_clean_cell(h) for h in lines[0].split('|') if h.strip()]
 
             # 구분선(2번째 행) 스킵
             data_lines = lines[2:]
 
             rows = []
             for line in data_lines:
-                cells = [c.strip() for c in line.split('|') if c != '']
+                cells = [_clean_cell(c) for c in line.split('|') if c != '']
                 # 셀 수가 헤더와 다르면 패딩/트리밍
                 if len(cells) < len(headers):
                     cells += [''] * (len(headers) - len(cells))
