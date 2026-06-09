@@ -149,11 +149,6 @@ _DANGEROUS_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# 파괴적 ALTER 패턴 (경고용)
-_DESTRUCTIVE_ALTER = re.compile(
-    r'\bALTER\s+TABLE\b.+\b(DROP\s+COLUMN|DROP\s+PRIMARY\s+KEY)\b',
-    re.IGNORECASE | re.DOTALL,
-)
 
 
 def classify_sql(sql: str) -> str:
@@ -200,10 +195,6 @@ def guard_sql(sql: str, allow_write: bool) -> None:
     # 위험 구문 차단
     if _DANGEROUS_PATTERNS.search(sql):
         raise DbBuilderError("허용되지 않는 구문이 포함되어 있습니다 (DROP DATABASE / TRUNCATE 등).")
-
-    # 파괴적 ALTER 차단
-    if _DESTRUCTIVE_ALTER.search(sql):
-        raise DbBuilderError("컬럼/PK 삭제를 포함한 ALTER는 허용되지 않습니다.")
 
     # 쓰기 경로 외 비SELECT 차단
     if not allow_write:
@@ -279,6 +270,8 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
 _NL2SQL_SYSTEM = (
     "당신은 MySQL 전문가입니다. "
     "주어진 스키마를 바탕으로 사용자의 자연어 질의를 정확한 MySQL 쿼리로 변환하세요. "
+    "테이블 별칭은 IS, AS, BY, IN, ON 등 MySQL 예약어를 절대 사용하지 마세요. " 
+    "공백이 포함된 컬럼명은 반드시 백틱(`)으로 감싸세요. "                       
     "SQL 쿼리만 출력하고, 설명·주석·코드펜스(```)는 절대 포함하지 마세요. "
     "세미콜론은 문장 끝에 한 번만 붙이세요."
 )

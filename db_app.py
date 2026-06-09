@@ -1,5 +1,6 @@
 import streamlit as st
 import logging
+import re
 import pandas as pd
 from io import BytesIO
 
@@ -75,7 +76,7 @@ with st.sidebar:
 
 
 #
-# 모드 2 — NL 2 SQL Console
+# 모드 1 — NL 2 SQL Console
 #
 
 if mode == "NL 2 SQL Console":
@@ -99,10 +100,9 @@ if mode == "NL 2 SQL Console":
                     model_name=AI_MODEL_NAME,
                     endpoint=AI_ENDPOINT,
                 )
-                st.session_state["nl_sql"]      = sql
-                st.session_state["nl_kind"]     = db_builder.classify_sql(sql)
-                # SQL이 새로 생성될 때마다 key를 바꿔 text_area를 강제 재생성
-                st.session_state["nl_sql_gen"]  = st.session_state.get("nl_sql_gen", 0) + 1
+                st.session_state["nl_sql"]     = sql
+                st.session_state["nl_kind"]    = db_builder.classify_sql(sql)
+                st.session_state["nl_sql_gen"] = st.session_state.get("nl_sql_gen", 0) + 1
             except db_builder.DbBuilderError as e:
                 st.error(f"SQL 생성 실패: {e}")
 
@@ -117,10 +117,9 @@ if mode == "NL 2 SQL Console":
                                   key=f"nl_sql_editor_{gen}")
 
         # 수정된 SQL을 세션에 반영
-        if edited_sql != sql:
-            st.session_state["nl_sql"]  = edited_sql
-            st.session_state["nl_kind"] = db_builder.classify_sql(edited_sql)
-            kind = st.session_state["nl_kind"]
+        st.session_state["nl_sql"]  = edited_sql
+        st.session_state["nl_kind"] = db_builder.classify_sql(edited_sql)
+        kind = st.session_state["nl_kind"]
 
         st.caption(f"구문 분류: **{kind.upper()}**")
         st.markdown("---")
@@ -128,13 +127,11 @@ if mode == "NL 2 SQL Console":
         #  SELECT 경로
         if kind == "select":
             if st.button("▶ 조회 실행", type="primary"):
-                # 조회 결과·편집 관련 키만 초기화 (nl_sql/nl_kind는 유지)
                 for k in ("nl_df", "nl_df_orig", "nl_target_table",
                           "nl_update_sqls", "nl_update_pending"):
                     st.session_state.pop(k, None)
                 st.session_state["nl_edit_gen"] = st.session_state.get("nl_edit_gen", 0) + 1
                 try:
-                    import re
                     df = db_builder.run_select(engine, edited_sql, limit=20000)
                     st.session_state["nl_df"]      = df
                     st.session_state["nl_df_orig"] = df.copy()
@@ -144,13 +141,12 @@ if mode == "NL 2 SQL Console":
                     st.error(f"조회 실패: {e}")
 
             if "nl_df" in st.session_state:
-                df_orig = st.session_state["nl_df_orig"]
+                df_orig      = st.session_state["nl_df_orig"]
                 target_table = st.session_state.get("nl_target_table")
-                edit_gen = st.session_state.get("nl_edit_gen", 0)
+                edit_gen     = st.session_state.get("nl_edit_gen", 0)
 
                 st.success(f"✅ {len(df_orig)}행 조회됨")
 
-                # 단일 테이블 SELECT일 때만 편집 활성화
                 if target_table:
                     st.caption("셀을 직접 수정한 뒤 **변경 반영** 버튼을 누르세요.")
                     edited_df = st.data_editor(
@@ -162,7 +158,6 @@ if mode == "NL 2 SQL Console":
                     edited_df = df_orig
                     st.dataframe(df_orig, use_container_width=True)
 
-                # 변경 반영 / 새 테이블로 저장
                 if target_table:
                     btn_col1, btn_col2 = st.columns(2)
                     with btn_col1:
@@ -228,7 +223,7 @@ if mode == "NL 2 SQL Console":
                 if st.session_state.get("nl_save_as"):
                     st.markdown("#### 새 테이블로 저장")
                     existing_tables = db_builder.list_tables(engine)
-                    new_table_name = st.text_input(
+                    new_table_name  = st.text_input(
                         "새 테이블명", placeholder="예) ip_table_backup",
                         key="nl_save_as_name"
                     )
@@ -262,6 +257,16 @@ if mode == "NL 2 SQL Console":
         #  DDL / DML 경로
         elif kind in ("ddl", "dml"):
             st.warning("⚠️ 쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
+
+            # DDL 파괴적 작업 경고
+            if kind == "ddl":
+                if re.search(
+                    r'\bALTER\s+TABLE\b.+\b(DROP\s+COLUMN|DROP\s+PRIMARY\s+KEY)\b',
+                    edited_sql, re.IGNORECASE | re.DOTALL
+                ):
+                    st.error("컬럼/PK 삭제가 포함된 ALTER입니다. 해당 데이터는 영구 삭제됩니다.")
+                elif re.search(r'\bDROP\s+TABLE\b', edited_sql, re.IGNORECASE):
+                    st.error("테이블 전체 삭제입니다. 테이블과 데이터가 영구 삭제됩니다.")
 
             col1, col2 = st.columns(2)
 
@@ -308,7 +313,7 @@ if mode == "NL 2 SQL Console":
 
 
 #
-# 모드 1 — PDF → Table
+# 모드 2 — PDF → Table
 #
 
 elif mode == "PDF → Table":
@@ -338,7 +343,6 @@ elif mode == "PDF → Table":
         md_text = st.session_state.get("pdf_md", "")
 
         if not tables:
-            # 비상구 — 빈 그리드 수동 입력
             st.warning("⚠️ 자동 추출된 표가 없습니다. 아래 마크다운에서 직접 데이터를 확인하세요.")
             with st.expander("추출된 마크다운 원문"):
                 st.text_area("마크다운", md_text, height=300)
@@ -363,7 +367,6 @@ elif mode == "PDF → Table":
         else:
             st.success(f"✅ {len(tables)}개 표 추출됨")
 
-            # 표가 여러 개면 통합 여부 선택
             merge_mode = False
             if len(tables) > 1:
                 merge_mode = st.toggle(
@@ -374,7 +377,6 @@ elif mode == "PDF → Table":
                 st.session_state["pdf_merge_mode"] = merge_mode
 
             if merge_mode:
-                # 전체 통합 미리보기
                 try:
                     merged_df = pd.concat(tables, ignore_index=True)
                 except Exception as e:
@@ -382,10 +384,8 @@ elif mode == "PDF → Table":
                     merged_df = tables[0]
 
                 drop_cols_m = st.multiselect(
-                    "제외할 컬럼 선택",
-                    options=list(merged_df.columns),
-                    default=[],
-                    key="drop_cols_merged",
+                    "제외할 컬럼 선택", options=list(merged_df.columns),
+                    default=[], key="drop_cols_merged",
                 )
                 if drop_cols_m:
                     merged_df = merged_df.drop(columns=drop_cols_m)
@@ -395,7 +395,7 @@ elif mode == "PDF → Table":
                     merged_df, num_rows="dynamic",
                     use_container_width=True, key="editor_merged"
                 )
-                st.session_state["pdf_tables"] = [edited_df]
+                st.session_state["pdf_tables"]    = [edited_df]
                 st.session_state["pdf_table_idx"] = 0
 
                 with st.expander("추출된 마크다운 원문"):
@@ -412,7 +412,6 @@ elif mode == "PDF → Table":
                         st.rerun()
 
             else:
-                # 개별 표 선택 모드
                 idx = st.session_state.get("pdf_table_idx", 0)
                 if len(tables) > 1:
                     idx = st.selectbox(
@@ -423,10 +422,8 @@ elif mode == "PDF → Table":
                     st.session_state["pdf_table_idx"] = idx
 
                 drop_cols_s = st.multiselect(
-                    "제외할 컬럼 선택",
-                    options=list(tables[idx].columns),
-                    default=[],
-                    key=f"drop_cols_{idx}",
+                    "제외할 컬럼 선택", options=list(tables[idx].columns),
+                    default=[], key=f"drop_cols_{idx}",
                 )
                 display_df = tables[idx].drop(columns=drop_cols_s) if drop_cols_s else tables[idx]
 
