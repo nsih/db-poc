@@ -23,7 +23,8 @@ def _reset_pdf_state():
 
 def _reset_nl_state():
     for k in ("nl_sql", "nl_df", "nl_df_orig", "nl_kind", "nl_pending_commit",
-              "nl_target_table", "nl_update_sqls", "nl_update_pending", "nl_edit_gen"):
+              "nl_target_table", "nl_update_sqls", "nl_update_pending", "nl_edit_gen",
+              "nl_save_as"):
         st.session_state.pop(k, None)
 
 
@@ -54,7 +55,7 @@ except db_builder.DbBuilderError as e:
 
 mode = st.sidebar.radio(
     "모드 선택",
-    ["NL SQL 콘솔", "PDF → Table"],
+    ["NL 2 SQL Console", "PDF → Table"],
     on_change=lambda: (_reset_nl_state(), _reset_pdf_state()),
 )
 
@@ -74,11 +75,11 @@ with st.sidebar:
 
 
 #
-# 모드 2 — NL SQL 콘솔
+# 모드 2 — NL 2 SQL Console
 #
 
-if mode == "NL SQL 콘솔":
-    st.title("🗄️ NL SQL 콘솔")
+if mode == "NL 2 SQL Console":
+    st.title("🗄️ NL 2 SQL Console")
     st.caption("자연어로 질의하면 SQL을 생성합니다. **생성된 SQL을 반드시 확인 후 실행하세요.**")
 
     #  자연어 입력
@@ -112,7 +113,7 @@ if mode == "NL SQL 콘솔":
         gen  = st.session_state.get("nl_sql_gen", 0)
 
         st.markdown("#### 생성된 SQL")
-        edited_sql = st.text_area("SQL (직접 수정 가능)", value=sql, height=120,
+        edited_sql = st.text_area("SQL (직접 수정 가능)", value=sql, height=240,
                                   key=f"nl_sql_editor_{gen}")
 
         # 수정된 SQL을 세션에 반영
@@ -161,20 +162,28 @@ if mode == "NL SQL 콘솔":
                     edited_df = df_orig
                     st.dataframe(df_orig, use_container_width=True)
 
-                # 변경 반영 버튼
+                # 변경 반영 / 새 테이블로 저장
                 if target_table:
-                    if st.button("📝 변경 반영", use_container_width=False):
-                        try:
-                            update_sqls = db_builder.build_update_sqls(
-                                df_orig, edited_df, target_table
-                            )
-                            if not update_sqls:
-                                st.info("변경된 셀이 없습니다.")
-                            else:
-                                st.session_state["nl_update_sqls"] = update_sqls
-                                st.rerun()
-                        except db_builder.DbBuilderError as e:
-                            st.error(f"변경 감지 실패: {e}")
+                    btn_col1, btn_col2 = st.columns(2)
+                    with btn_col1:
+                        if st.button("📝 변경 반영", use_container_width=True):
+                            st.session_state.pop("nl_save_as", None)
+                            try:
+                                update_sqls = db_builder.build_update_sqls(
+                                    df_orig, edited_df, target_table
+                                )
+                                if not update_sqls:
+                                    st.info("변경된 셀이 없습니다.")
+                                else:
+                                    st.session_state["nl_update_sqls"] = update_sqls
+                                    st.rerun()
+                            except db_builder.DbBuilderError as e:
+                                st.error(f"변경 감지 실패: {e}")
+                    with btn_col2:
+                        if st.button("💾 새 테이블로 저장", use_container_width=True):
+                            st.session_state.pop("nl_update_sqls", None)
+                            st.session_state["nl_save_as"] = True
+                            st.rerun()
 
                 # UPDATE 승인 게이트
                 if "nl_update_sqls" in st.session_state:
@@ -214,6 +223,41 @@ if mode == "NL SQL 콘솔":
                                 st.session_state.pop("nl_update_sqls", None)
                                 st.session_state.pop("nl_update_pending", None)
                                 st.rerun()
+
+                # 새 테이블로 저장 게이트
+                if st.session_state.get("nl_save_as"):
+                    st.markdown("#### 새 테이블로 저장")
+                    existing_tables = db_builder.list_tables(engine)
+                    new_table_name = st.text_input(
+                        "새 테이블명", placeholder="예) ip_table_backup",
+                        key="nl_save_as_name"
+                    )
+                    if_exists = "fail"
+                    if new_table_name and new_table_name in existing_tables:
+                        st.warning(f"⚠️ `{new_table_name}` 테이블이 이미 존재합니다.")
+                        if_exists = st.radio(
+                            "처리 방식", ["fail", "replace", "append"],
+                            captions=["중단", "덮어쓰기", "이어붙이기"],
+                            horizontal=True, key="nl_save_as_ifexists"
+                        )
+                    s1, s2 = st.columns(2)
+                    with s1:
+                        if st.button("✅ 저장 실행", type="primary",
+                                     disabled=not (new_table_name or "").strip(),
+                                     use_container_width=True):
+                            try:
+                                cnt = db_builder.load_dataframe(
+                                    engine, edited_df, new_table_name, if_exists=if_exists
+                                )
+                                st.success(f"✅ `{new_table_name}` 테이블에 {cnt}행 저장 완료")
+                                st.session_state.pop("nl_save_as", None)
+                                st.rerun()
+                            except db_builder.DbBuilderError as e:
+                                st.error(f"저장 실패: {e}")
+                    with s2:
+                        if st.button("취소", use_container_width=True, key="nl_save_as_cancel"):
+                            st.session_state.pop("nl_save_as", None)
+                            st.rerun()
 
         #  DDL / DML 경로
         elif kind in ("ddl", "dml"):
