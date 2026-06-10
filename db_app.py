@@ -25,8 +25,13 @@ def _reset_pdf_state():
 def _reset_nl_state():
     for k in ("nl_sql", "nl_df", "nl_df_orig", "nl_kind", "nl_pending_commit",
               "nl_target_table", "nl_update_sqls", "nl_update_pending", "nl_edit_gen",
-              "nl_save_as"):
+              "nl_sql_gen", "nl_save_as", "nl_done"):
         st.session_state.pop(k, None)
+
+
+def _reset_all():
+    _reset_nl_state()
+    _reset_pdf_state()
 
 
 #  캐시 리소스
@@ -42,6 +47,32 @@ AI_WORKER_IP   = st.secrets["AI_WORKER_IP"]
 AI_WORKER_PORT = st.secrets.get("AI_WORKER_PORT", 1234)
 AI_MODEL_NAME  = st.secrets.get("AI_MODEL_NAME", "")
 AI_ENDPOINT    = f"http://{AI_WORKER_IP}:{AI_WORKER_PORT}/v1/chat/completions"
+
+
+#  헬퍼
+
+def _auto_select(engine, sql: str):
+    """쓰기 실행 완료 후 대상 테이블을 자동 조회해 현재 상태를 표시한다.
+    DROP TABLE이면 조회할 테이블이 없으므로 스킵한다.
+    """
+    if re.search(r'\bDROP\s+TABLE\b', sql, re.IGNORECASE):
+        return
+
+    m = re.search(
+        r'\b(?:INTO|TABLE|FROM|UPDATE)\s+`?(\w+)`?',
+        sql, re.IGNORECASE
+    )
+    if not m:
+        return
+
+    table = m.group(1)
+    try:
+        df = db_builder.run_select(engine, f"SELECT * FROM `{table}`", limit=50)
+        st.markdown(f"#### 📋 `{table}` 현재 상태 (최대 50행)")
+        st.dataframe(df, use_container_width=True)
+        st.caption(f"{len(df)}행 조회됨")
+    except db_builder.DbBuilderError as e:
+        st.warning(f"자동 조회 실패: {e}")
 
 
 #  메인 UI
@@ -116,7 +147,7 @@ if mode == "NL 2 SQL Console":
         edited_sql = st.text_area("SQL (직접 수정 가능)", value=sql, height=240,
                                   key=f"nl_sql_editor_{gen}")
 
-        # 수정된 SQL을 세션에 반영
+        # 수정된 SQL을 항상 세션에 반영
         st.session_state["nl_sql"]  = edited_sql
         st.session_state["nl_kind"] = db_builder.classify_sql(edited_sql)
         kind = st.session_state["nl_kind"]
@@ -210,14 +241,30 @@ if mode == "NL 2 SQL Console":
                                         st.error(f"실행 실패: {err}")
                                 else:
                                     st.success(f"✅ {len(update_sqls)}건 실행 완료")
+                                    st.session_state["nl_done"] = True
+                                    target = st.session_state.get("nl_target_table")
+                                    if target:
+                                        try:
+                                            df_after = db_builder.run_select(
+                                                engine, f"SELECT * FROM `{target}`", limit=50
+                                            )
+                                            st.markdown(f"#### 📋 `{target}` 현재 상태 (최대 50행)")
+                                            st.dataframe(df_after, use_container_width=True)
+                                            st.caption(f"{len(df_after)}행 조회됨")
+                                        except db_builder.DbBuilderError as e:
+                                            st.warning(f"자동 조회 실패: {e}")
                                 st.session_state.pop("nl_update_sqls", None)
                                 st.session_state.pop("nl_update_pending", None)
-                                st.rerun()
                         with c2:
-                            if st.button("취소", use_container_width=True):
-                                st.session_state.pop("nl_update_sqls", None)
-                                st.session_state.pop("nl_update_pending", None)
-                                st.rerun()
+                            if st.session_state.get("nl_done"):
+                                if st.button("🔄 다음 작업 실행", use_container_width=True):
+                                    _reset_all()
+                                    st.rerun()
+                            else:
+                                if st.button("취소", use_container_width=True):
+                                    st.session_state.pop("nl_update_sqls", None)
+                                    st.session_state.pop("nl_update_pending", None)
+                                    st.rerun()
 
                 # 새 테이블로 저장 게이트
                 if st.session_state.get("nl_save_as"):
@@ -256,57 +303,64 @@ if mode == "NL 2 SQL Console":
 
         #  DDL / DML 경로
         elif kind in ("ddl", "dml"):
-            st.warning("⚠️ 쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
+            # 실행 완료 후 — 경고/버튼 영역 전체 숨기고 다음 작업 버튼만 표시
+            if st.session_state.get("nl_done"):
+                if st.button("🔄 다음 작업 실행", type="primary"):
+                    _reset_all()
+                    st.rerun()
+            else:
+                st.warning("⚠️ 쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
 
-            # DDL 파괴적 작업 경고
-            if kind == "ddl":
-                if re.search(
-                    r'\bALTER\s+TABLE\b.+\b(DROP\s+COLUMN|DROP\s+PRIMARY\s+KEY)\b',
-                    edited_sql, re.IGNORECASE | re.DOTALL
-                ):
-                    st.error("컬럼/PK 삭제가 포함된 ALTER입니다. 해당 데이터는 영구 삭제됩니다.")
-                elif re.search(r'\bDROP\s+TABLE\b', edited_sql, re.IGNORECASE):
-                    st.error("테이블 전체 삭제입니다. 테이블과 데이터가 영구 삭제됩니다.")
+                # DDL 파괴적 작업 경고
+                if kind == "ddl":
+                    if re.search(
+                        r'\bALTER\s+TABLE\b.+\b(DROP\s+COLUMN|DROP\s+PRIMARY\s+KEY)\b',
+                        edited_sql, re.IGNORECASE | re.DOTALL
+                    ):
+                        st.error("🚨 컬럼/PK 삭제가 포함된 ALTER입니다. 해당 데이터는 영구 삭제됩니다.")
+                    elif re.search(r'\bDROP\s+TABLE\b', edited_sql, re.IGNORECASE):
+                        st.error("🚨 테이블 전체 삭제입니다. 테이블과 데이터가 영구 삭제됩니다.")
 
-            col1, col2 = st.columns(2)
+                col1, col2 = st.columns(2)
 
-            with col1:
-                if kind == "dml":
-                    if st.button("🔍 미리보기 (rollback)", use_container_width=True):
-                        try:
-                            result = db_builder.run_write(engine, edited_sql, commit=False)
-                            msg = result.get("message", "")
-                            if msg:
-                                st.info(msg)
-                            else:
-                                st.info(f"예상 영향 행 수: {result['rowcount']}행 (미커밋)")
-                        except db_builder.DbBuilderError as e:
-                            st.error(f"미리보기 실패: {e}")
-                else:
-                    st.info("DDL은 미리보기가 지원되지 않습니다. SQL을 확인 후 실행하세요.")
-
-            with col2:
-                if "nl_pending_commit" not in st.session_state:
-                    if st.button("✅ 실행 확정", type="primary", use_container_width=True):
-                        st.session_state["nl_pending_commit"] = True
-                        st.rerun()
-                else:
-                    st.error("정말 실행하시겠습니까? 되돌릴 수 없습니다.")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("예, 실행", type="primary", use_container_width=True):
+                with col1:
+                    if kind == "dml":
+                        if st.button("🔍 미리보기 (rollback)", use_container_width=True):
                             try:
-                                result = db_builder.run_write(engine, edited_sql, commit=True)
-                                st.success(f"✅ 실행 완료 (영향 행: {result['rowcount']})")
+                                result = db_builder.run_write(engine, edited_sql, commit=False)
+                                msg = result.get("message", "")
+                                if msg:
+                                    st.info(msg)
+                                else:
+                                    st.info(f"예상 영향 행 수: {result['rowcount']}행 (미커밋)")
+                            except db_builder.DbBuilderError as e:
+                                st.error(f"미리보기 실패: {e}")
+                    else:
+                        st.info("DDL은 미리보기가 지원되지 않습니다. SQL을 확인 후 실행하세요.")
+
+                with col2:
+                    if "nl_pending_commit" not in st.session_state:
+                        if st.button("✅ 실행 확정", type="primary", use_container_width=True):
+                            st.session_state["nl_pending_commit"] = True
+                            st.rerun()
+                    else:
+                        st.error("정말 실행하시겠습니까? 되돌릴 수 없습니다.")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if st.button("예, 실행", type="primary", use_container_width=True):
+                                try:
+                                    result = db_builder.run_write(engine, edited_sql, commit=True)
+                                    st.success(f"✅ 실행 완료 (영향 행: {result['rowcount']})")
+                                    st.session_state.pop("nl_pending_commit", None)
+                                    st.session_state["nl_done"] = True
+                                    _auto_select(engine, edited_sql)
+                                except db_builder.DbBuilderError as e:
+                                    st.error(f"실행 실패: {e}")
+                                    st.session_state.pop("nl_pending_commit", None)
+                        with c2:
+                            if st.button("취소", use_container_width=True):
                                 st.session_state.pop("nl_pending_commit", None)
                                 st.rerun()
-                            except db_builder.DbBuilderError as e:
-                                st.error(f"실행 실패: {e}")
-                                st.session_state.pop("nl_pending_commit", None)
-                    with c2:
-                        if st.button("취소", use_container_width=True):
-                            st.session_state.pop("nl_pending_commit", None)
-                            st.rerun()
 
         else:
             st.error("분류할 수 없는 SQL입니다. 직접 수정 후 재시도하세요.")
@@ -531,7 +585,7 @@ elif mode == "PDF → Table":
         with col1:
             if st.button("← 타입 지정으로"):
                 st.session_state["pdf_step"] = "type_confirm"
-                st.rerun()
+                st.rerun() 
         with col2:
             if st.button("✅ 적재 실행", type="primary"):
                 with st.spinner("적재 중..."):
@@ -540,7 +594,17 @@ elif mode == "PDF → Table":
                             engine, df, table, if_exists=if_exists
                         )
                         st.success(f"✅ `{table}` 테이블에 {cnt}행 적재 완료")
-                        _reset_pdf_state()
+                        # 적재 완료 후 자동 조회
+                        try:
+                            df_after = db_builder.run_select(
+                                engine, f"SELECT * FROM `{table}`", limit=50
+                            )
+                            st.markdown(f"#### 📋 `{table}` 적재 결과 (최대 50행)")
+                            st.dataframe(df_after, use_container_width=True)
+                            st.caption(f"{len(df_after)}행 조회됨")
+                        except db_builder.DbBuilderError as e:
+                            st.warning(f"자동 조회 실패: {e}")
+                        _reset_all()
                         st.balloons()
                     except db_builder.DbBuilderError as e:
                         st.error(f"적재 실패: {e}")
