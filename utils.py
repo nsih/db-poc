@@ -35,7 +35,8 @@ def auto_select(engine, sql: str) -> None:
 def reset_nl_state() -> None:
     for k in ("nl_sql", "nl_df", "nl_df_orig", "nl_kind", "nl_pending_commit",
               "nl_target_table", "nl_update_sqls", "nl_update_pending",
-              "nl_edit_gen", "nl_sql_gen", "nl_save_as", "nl_done"):
+              "nl_edit_gen", "nl_sql_gen", "nl_save_as", "nl_done",
+              "nl_ddl_preview", "nl_post_update_target"):
         st.session_state.pop(k, None)
 
 

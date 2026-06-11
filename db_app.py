@@ -24,8 +24,8 @@ with st.sidebar:
     except Exception:
         st.caption("조회 실패")
 
-nl_page  = st.Page("pages/nl_console.py", title="NL 2 SQL Console", icon="🗄️")
-pdf_page = st.Page("pages/pdf_table.py",  title="PDF → Table",      icon="📄")
+nl_page   = st.Page("pages/nl_console.py", title="NL 2 SQL Console", icon="🗄️")
+file_page = st.Page("pages/file_table.py", title="파일 → Table",     icon="📄")
 
-pg = st.navigation([nl_page, pdf_page])
+pg = st.navigation([nl_page, file_page])
 pg.run()

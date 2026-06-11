@@ -204,7 +204,6 @@ def guard_sql(sql: str, allow_write: bool) -> None:
 
 
 def add_limit(sql: str, limit: int = 20000) -> str:
-    """SELECT에 LIMIT이 없으면 강제 주입. 4GB fetchall OOM 방어."""
     sql_stripped = sql.rstrip().rstrip(";")
     if classify_sql(sql) != "select":
         return sql
@@ -549,3 +548,116 @@ def build_update_sqls(original: pd.DataFrame,
         results.append({"sql": sql, "warning": warning})
 
     return results
+
+# DDL 정적 검사
+
+def preview_ddl(engine: Engine, sql: str) -> dict:
+    """DDL 실행 없이 정적 분석만 수행.
+
+    반환값 예시:
+    {
+        "type":     "ALTER TABLE",
+        "table":    "INFO_SYSTEM",
+        "findings": [
+            {"level": "info",    "msg": "대상 테이블 INFO_SYSTEM 존재함"},
+            {"level": "warning", "msg": "DROP COLUMN: IP_Adress 컬럼 존재함 — 삭제 후 복구 불가"},
+        ]
+    }
+    level: "info" | "warning" | "error"
+    """
+    guard_sql(sql, allow_write=True)
+    if classify_sql(sql) != "ddl":
+        raise DbBuilderError("DDL이 아닙니다.")
+
+    findings: list[dict] = []
+    result = {"type": "알 수 없음", "table": None, "findings": findings}
+
+    existing_tables = list_tables(engine)
+
+    # CREATE TABLE
+    m = re.match(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?', sql, re.IGNORECASE)
+    if m:
+        table = m.group(1)
+        result["type"]  = "CREATE TABLE"
+        result["table"] = table
+        if table in existing_tables:
+            if re.search(r'IF\s+NOT\s+EXISTS', sql, re.IGNORECASE):
+                findings.append({"level": "warning",
+                                  "msg": f"테이블 {table} 이미 존재 — IF NOT EXISTS로 인해 스킵됩니다"})
+            else:
+                findings.append({"level": "error",
+                                  "msg": f"테이블 {table} 이미 존재 — 실행 시 오류 발생"})
+        else:
+            findings.append({"level": "info", "msg": f"테이블 {table} 신규 생성"})
+        return result
+
+    # DROP TABLE
+    m = re.match(r'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?`?(\w+)`?', sql, re.IGNORECASE)
+    if m:
+        table = m.group(1)
+        result["type"]  = "DROP TABLE"
+        result["table"] = table
+        if table not in existing_tables:
+            findings.append({"level": "error",
+                              "msg": f"테이블 {table} 존재하지 않음 — 실행 시 오류 발생"})
+        else:
+            findings.append({"level": "warning",
+                              "msg": f"테이블 {table} 및 모든 데이터 영구 삭제"})
+        return result
+
+    # ALTER TABLE
+    m = re.match(r'ALTER\s+TABLE\s+`?(\w+)`?', sql, re.IGNORECASE)
+    if m:
+        table = m.group(1)
+        result["type"]  = "ALTER TABLE"
+        result["table"] = table
+
+        if table not in existing_tables:
+            findings.append({"level": "error",
+                              "msg": f"테이블 {table} 존재하지 않음 — 실행 시 오류 발생"})
+            return result
+
+        findings.append({"level": "info", "msg": f"대상 테이블 {table} 존재함"})
+
+        try:
+            existing_cols = {c["name"] for c in inspect(engine).get_columns(table)}
+        except Exception:
+            existing_cols = set()
+
+        # ADD COLUMN
+        for col_m in re.finditer(r'ADD\s+(?:COLUMN\s+)?`?(\w+)`?', sql, re.IGNORECASE):
+            col = col_m.group(1)
+            if col in existing_cols:
+                findings.append({"level": "error",
+                                  "msg": f"ADD COLUMN {col} — 이미 존재하는 컬럼"})
+            else:
+                findings.append({"level": "info",
+                                  "msg": f"ADD COLUMN {col} — 신규 추가"})
+
+        # DROP COLUMN
+        for col_m in re.finditer(r'DROP\s+(?:COLUMN\s+)?`?(\w+)`?', sql, re.IGNORECASE):
+            col = col_m.group(1)
+            if col not in existing_cols:
+                findings.append({"level": "error",
+                                  "msg": f"DROP COLUMN {col} — 존재하지 않는 컬럼"})
+            else:
+                findings.append({"level": "warning",
+                                  "msg": f"DROP COLUMN {col} — 삭제 후 복구 불가"})
+
+        # RENAME COLUMN
+        for col_m in re.finditer(
+            r'RENAME\s+COLUMN\s+`?(\w+)`?\s+TO\s+`?(\w+)`?', sql, re.IGNORECASE
+        ):
+            old, new = col_m.group(1), col_m.group(2)
+            if old not in existing_cols:
+                findings.append({"level": "error",
+                                  "msg": f"RENAME COLUMN {old} — 존재하지 않는 컬럼"})
+            else:
+                findings.append({"level": "info",
+                                  "msg": f"RENAME COLUMN {old} → {new}"})
+
+        return result
+
+    # 분류 불가 DDL (RENAME TABLE 등)
+    findings.append({"level": "info", "msg": "세부 분석이 지원되지 않는 DDL 구문입니다."})
+    return result

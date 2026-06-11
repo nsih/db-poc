@@ -10,28 +10,59 @@ engine = load_engine()
 _SQL_TYPE_OPTIONS = ["TEXT", "BIGINT", "INT", "DOUBLE", "FLOAT",
                      "TINYINT(1)", "DATE", "DATETIME", "VARCHAR(255)"]
 
-st.title("📄 PDF → Table")
-st.caption("PDF에서 표를 추출해 MySQL 테이블로 적재합니다.")
+st.title("파일 → Table")
+st.caption("PDF, CSV, Excel 파일에서 표를 추출해 MySQL 테이블로 적재합니다.")
 
 step = st.session_state.get("pdf_step", "upload")
 
-# ── Step A: 업로드 ────────────────────────────────────────────────────────────
+# Step A: 업로드
 
 if step == "upload":
-    uploaded = st.file_uploader("PDF 선택", type=["pdf"])
+    uploaded = st.file_uploader("파일 선택", type=["pdf", "csv", "xlsx", "xls"])
     if uploaded:
-        with st.spinner("PDF 파싱 중..."):
-            try:
-                md_text = pdf_extract.extract_text_from_pdf(BytesIO(uploaded.getvalue()))
-                tables  = db_builder.parse_markdown_tables(md_text)
-                st.session_state["pdf_md"]     = md_text
-                st.session_state["pdf_tables"] = tables
-                st.session_state["pdf_step"]   = "review"
-                st.rerun()
-            except pdf_extract.PdfExtractError as e:
-                st.error(f"PDF 파싱 실패: {e}")
+        ext = uploaded.name.rsplit(".", 1)[-1].lower()
 
-# ── Step B: 표 검수 ───────────────────────────────────────────────────────────
+        # CSV / Excel — pandas로 바로 읽어 Step B 진입
+        if ext in ("csv", "xlsx", "xls"):
+            with st.spinner("파일 파싱 중..."):
+                try:
+                    if ext == "csv":
+                        # 인코딩 자동 감지 — utf-8 실패 시 cp949 재시도
+                        try:
+                            df = pd.read_csv(BytesIO(uploaded.getvalue()), encoding="utf-8")
+                        except UnicodeDecodeError:
+                            df = pd.read_csv(BytesIO(uploaded.getvalue()), encoding="cp949")
+                    else:
+                        df = pd.read_excel(BytesIO(uploaded.getvalue()))
+
+                    # Unnamed 컬럼명 정리
+                    df.columns = [
+                        str(c) if not str(c).startswith("Unnamed") else f"컬럼{i+1}"
+                        for i, c in enumerate(df.columns)
+                    ]
+                    df = df.astype(str).replace("nan", "")
+
+                    st.session_state["pdf_md"]     = ""
+                    st.session_state["pdf_tables"] = [df]
+                    st.session_state["pdf_step"]   = "review"
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"파일 파싱 실패: {e}")
+
+        # PDF — 기존 파이프라인
+        else:
+            with st.spinner("PDF 파싱 중..."):
+                try:
+                    md_text = pdf_extract.extract_text_from_pdf(BytesIO(uploaded.getvalue()))
+                    tables  = db_builder.parse_markdown_tables(md_text)
+                    st.session_state["pdf_md"]     = md_text
+                    st.session_state["pdf_tables"] = tables
+                    st.session_state["pdf_step"]   = "review"
+                    st.rerun()
+                except pdf_extract.PdfExtractError as e:
+                    st.error(f"PDF 파싱 실패: {e}")
+
+# Step B: 표 검수
 
 elif step == "review":
     tables  = st.session_state.get("pdf_tables", [])
@@ -60,7 +91,7 @@ elif step == "review":
                 st.rerun()
 
     else:
-        st.success(f"✅ {len(tables)}개 표 추출됨")
+        st.success(f"{len(tables)}개 표 추출됨")
 
         merge_mode = False
         if len(tables) > 1:
@@ -93,8 +124,9 @@ elif step == "review":
             st.session_state["pdf_tables"]    = [edited_df]
             st.session_state["pdf_table_idx"] = 0
 
-            with st.expander("추출된 마크다운 원문"):
-                st.text_area("마크다운", md_text, height=200)
+            if md_text:
+                with st.expander("추출된 마크다운 원문"):
+                    st.text_area("마크다운", md_text, height=200)
 
             col1, col2 = st.columns(2)
             with col1:
@@ -130,8 +162,9 @@ elif step == "review":
             tables[idx] = edited_df
             st.session_state["pdf_tables"] = tables
 
-            with st.expander("추출된 마크다운 원문"):
-                st.text_area("마크다운", md_text, height=200)
+            if md_text:
+                with st.expander("추출된 마크다운 원문"):
+                    st.text_area("마크다운", md_text, height=200)
 
             col1, col2 = st.columns(2)
             with col1:
@@ -144,7 +177,7 @@ elif step == "review":
                     reset_pdf_state()
                     st.rerun()
 
-# ── Step C: 컬럼 타입 + 테이블명 ─────────────────────────────────────────────
+# Step C: 컬럼 타입 + 테이블명
 
 elif step == "type_confirm":
     tables = st.session_state.get("pdf_tables", [])
@@ -206,7 +239,7 @@ elif step == "type_confirm":
             st.session_state["pdf_step"] = "confirm_load"
             st.rerun()
 
-# ── Step D: 최종 확인 + 적재 ─────────────────────────────────────────────────
+# Step D: 최종 확인 + 적재 
 
 elif step == "confirm_load":
     pending = st.session_state.get("pending_load", {})
@@ -230,18 +263,18 @@ elif step == "confirm_load":
             st.session_state["pdf_step"] = "type_confirm"
             st.rerun()
     with col2:
-        if st.button("✅ 적재 실행", type="primary"):
+        if st.button("적재 실행", type="primary"):
             with st.spinner("적재 중..."):
                 try:
                     cnt = db_builder.load_dataframe(
                         engine, df, table, if_exists=if_exists
                     )
-                    st.success(f"✅ `{table}` 테이블에 {cnt}행 적재 완료")
+                    st.success(f"`{table}` 테이블에 {cnt}행 적재 완료")
                     try:
                         df_after = db_builder.run_select(
-                            engine, f"SELECT * FROM `{table}`", limit=50
+                            engine, f"SELECT * FROM `{table}`", limit=20000
                         )
-                        st.markdown(f"#### 📋 `{table}` 적재 결과 (최대 50행)")
+                        st.markdown(f"#### `{table}` 적재 결과 (최대 20000행)")
                         st.dataframe(df_after, use_container_width=True)
                         st.caption(f"{len(df_after)}행 조회됨")
                     except db_builder.DbBuilderError as e:

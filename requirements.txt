@@ -6,3 +6,4 @@ sqlparse
 requests
 pymupdf
 pymupdf4llm
+openpyx1 
