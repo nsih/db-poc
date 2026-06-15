@@ -13,8 +13,7 @@ AI_ENDPOINT    = f"http://{AI_WORKER_IP}:{AI_WORKER_PORT}/v1/chat/completions"
 st.title("🗄️ NL 2 SQL Console")
 st.caption("자연어로 질의하면 SQL을 생성합니다. **생성된 SQL을 반드시 확인 후 실행하세요.**")
 
-# ── 자연어 입력 ───────────────────────────────────────────────────────────────
-
+# 자연어 입력 
 with st.form("nl_form"):
     question  = st.text_area("자연어 질의", height=80,
                              placeholder="예) 직원 테이블에서 부서가 IT인 사람 전부 조회해줘")
@@ -81,7 +80,7 @@ kind = st.session_state["nl_kind"]
 st.caption(f"구문 분류: **{kind.upper()}**")
 st.markdown("---")
 
-# ── SELECT 경로 ───────────────────────────────────────────────────────────────
+# SELECT 경로 
 
 if kind == "select":
     if st.button("▶ 조회 실행", type="primary"):
@@ -108,7 +107,7 @@ if kind == "select":
     st.success(f"{len(df_orig)}행 조회됨")
 
     if target_table:
-        st.caption("셀을 직접 수정한 뒤 **변경 반영** 버튼을 누르세요.")
+        st.caption("수정하려면 셀을 수정하고 **변경 반영** 버튼을 누르세요.")
         edited_df = st.data_editor(
             df_orig, use_container_width=True,
             key=f"nl_editor_{edit_gen}"
@@ -215,7 +214,7 @@ if kind == "select":
                 st.session_state.pop("nl_save_as", None)
                 st.rerun()
 
-# ── DDL / DML 경로 ────────────────────────────────────────────────────────────
+# DDL / DML 경로 
 
 elif kind in ("ddl", "dml"):
     st.warning("⚠️ 쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
@@ -225,9 +224,9 @@ elif kind in ("ddl", "dml"):
             r'\bALTER\s+TABLE\b.+\b(DROP\s+COLUMN|DROP\s+PRIMARY\s+KEY)\b',
             edited_sql, re.IGNORECASE | re.DOTALL
         ):
-            st.error("🚨 컬럼/PK 삭제가 포함된 ALTER입니다. 해당 데이터는 영구 삭제됩니다.")
+            st.error("컬럼/PK 삭제가 포함된 ALTER입니다. 해당 데이터는 영구 삭제됩니다.")
         elif re.search(r'\bDROP\s+TABLE\b', edited_sql, re.IGNORECASE):
-            st.error("🚨 테이블 전체 삭제입니다. 테이블과 데이터가 영구 삭제됩니다.")
+            st.error("테이블 전체 삭제입니다. 테이블과 데이터가 영구 삭제됩니다.")
 
     col1, col2 = st.columns(2)
 

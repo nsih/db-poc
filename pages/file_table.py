@@ -10,7 +10,7 @@ engine = load_engine()
 _SQL_TYPE_OPTIONS = ["TEXT", "BIGINT", "INT", "DOUBLE", "FLOAT",
                      "TINYINT(1)", "DATE", "DATETIME", "VARCHAR(255)"]
 
-st.title("파일 → Table")
+st.title("📄 파일 → Table")
 st.caption("PDF, CSV, Excel 파일에서 표를 추출해 MySQL 테이블로 적재합니다.")
 
 step = st.session_state.get("pdf_step", "upload")
@@ -40,7 +40,7 @@ if step == "upload":
                         str(c) if not str(c).startswith("Unnamed") else f"컬럼{i+1}"
                         for i, c in enumerate(df.columns)
                     ]
-                    df = df.astype(str).replace("nan", "")
+                    df = df.where(df.notna(), other=None)
 
                     st.session_state["pdf_md"]     = ""
                     st.session_state["pdf_tables"] = [df]
@@ -69,7 +69,7 @@ elif step == "review":
     md_text = st.session_state.get("pdf_md", "")
 
     if not tables:
-        st.warning("⚠️ 자동 추출된 표가 없습니다. 아래 마크다운에서 직접 데이터를 확인하세요.")
+        st.warning("표를 찾지 못했습니다")
         with st.expander("추출된 마크다운 원문"):
             st.text_area("마크다운", md_text, height=300)
 
@@ -239,7 +239,7 @@ elif step == "type_confirm":
             st.session_state["pdf_step"] = "confirm_load"
             st.rerun()
 
-# Step D: 최종 확인 + 적재 
+# Step D: 최종 확인 + 적재
 
 elif step == "confirm_load":
     pending = st.session_state.get("pending_load", {})
@@ -272,9 +272,9 @@ elif step == "confirm_load":
                     st.success(f"`{table}` 테이블에 {cnt}행 적재 완료")
                     try:
                         df_after = db_builder.run_select(
-                            engine, f"SELECT * FROM `{table}`", limit=20000
+                            engine, f"SELECT * FROM `{table}`", limit=50
                         )
-                        st.markdown(f"#### `{table}` 적재 결과 (최대 20000행)")
+                        st.markdown(f"#### `{table}` 적재 결과 (최대 50행)")
                         st.dataframe(df_after, use_container_width=True)
                         st.caption(f"{len(df_after)}행 조회됨")
                     except db_builder.DbBuilderError as e:
