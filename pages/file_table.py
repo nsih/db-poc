@@ -16,18 +16,16 @@ st.caption("PDF, CSV, Excel 파일에서 표를 추출해 MySQL 테이블로 적
 step = st.session_state.get("pdf_step", "upload")
 
 # Step A: 업로드
-
 if step == "upload":
     uploaded = st.file_uploader("파일 선택", type=["pdf", "csv", "xlsx", "xls"])
     if uploaded:
         ext = uploaded.name.rsplit(".", 1)[-1].lower()
 
-        # CSV / Excel — pandas로 바로 읽어 Step B 진입
+        # CSV / Excel
         if ext in ("csv", "xlsx", "xls"):
             with st.spinner("파일 파싱 중..."):
                 try:
                     if ext == "csv":
-                        # 인코딩 자동 감지 — utf-8 실패 시 cp949 재시도
                         try:
                             df = pd.read_csv(BytesIO(uploaded.getvalue()), encoding="utf-8")
                         except UnicodeDecodeError:
@@ -35,7 +33,6 @@ if step == "upload":
                     else:
                         df = pd.read_excel(BytesIO(uploaded.getvalue()))
 
-                    # Unnamed 컬럼명 정리
                     df.columns = [
                         str(c) if not str(c).startswith("Unnamed") else f"컬럼{i+1}"
                         for i, c in enumerate(df.columns)
@@ -49,7 +46,7 @@ if step == "upload":
                 except Exception as e:
                     st.error(f"파일 파싱 실패: {e}")
 
-        # PDF — 기존 파이프라인
+        # PDF
         else:
             with st.spinner("PDF 파싱 중..."):
                 try:
@@ -63,7 +60,6 @@ if step == "upload":
                     st.error(f"PDF 파싱 실패: {e}")
 
 # Step B: 표 검수
-
 elif step == "review":
     tables  = st.session_state.get("pdf_tables", [])
     md_text = st.session_state.get("pdf_md", "")
@@ -178,7 +174,6 @@ elif step == "review":
                     st.rerun()
 
 # Step C: 컬럼 타입 + 테이블명
-
 elif step == "type_confirm":
     tables = st.session_state.get("pdf_tables", [])
     idx    = st.session_state.get("pdf_table_idx", 0)
@@ -240,7 +235,6 @@ elif step == "type_confirm":
             st.rerun()
 
 # Step D: 최종 확인 + 적재
-
 elif step == "confirm_load":
     pending = st.session_state.get("pending_load", {})
     if not pending:
@@ -274,7 +268,7 @@ elif step == "confirm_load":
                         df_after = db_builder.run_select(
                             engine, f"SELECT * FROM `{table}`", limit=50
                         )
-                        st.markdown(f"#### `{table}` 적재 결과 (최대 50행)")
+                        st.markdown(f"#### `{table}` 결과 상위 50행")
                         st.dataframe(df_after, use_container_width=True)
                         st.caption(f"{len(df_after)}행 조회됨")
                     except db_builder.DbBuilderError as e:

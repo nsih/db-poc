@@ -1,3 +1,7 @@
+# db_builder.py
+# 순수 로직 모듈 — Streamlit을 import하지 않는다.
+# UI(위젯·버튼·상태)는 전부 db_app.py가 담당.
+
 import logging
 import re
 import tomllib
@@ -11,14 +15,14 @@ from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
-# UI(위젯·버튼·상태)는 전부 db_app.py가 담당.
 
-#  예외
+# 예외
+
 class DbBuilderError(Exception):
     pass
 
 
-#  설정 로드
+# 설정 로드
 
 def _load_secrets() -> dict:
     path = Path(__file__).parent / ".streamlit" / "secrets.toml"
@@ -26,7 +30,7 @@ def _load_secrets() -> dict:
         return tomllib.load(f)
 
 
-#  연결
+# 연결
 
 def get_engine() -> Engine:
     """secrets.toml의 DB 개별 파라미터로 SQLAlchemy 엔진 생성.
@@ -56,7 +60,7 @@ def get_engine() -> Engine:
         raise DbBuilderError(f"DB 연결 실패: {e}")
 
 
-#  Introspection
+# Introspection
 
 def list_tables(engine: Engine) -> list[str]:
     try:
@@ -125,7 +129,7 @@ def get_schema_prompt(engine: Engine,
     return "\n".join(parts).strip()
 
 
-#  SQL 가드
+# SQL 가드
 
 _DANGEROUS_PATTERNS = re.compile(
     r'\b(DROP\s+DATABASE|DROP\s+SCHEMA|TRUNCATE|'
@@ -134,7 +138,6 @@ _DANGEROUS_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# SHOW / DESCRIBE / EXPLAIN — 결과 반환형이므로 select로 처리
 _SHOW_RE = re.compile(r'^\s*(SHOW|DESCRIBE|DESC|EXPLAIN)\b', re.IGNORECASE)
 
 
@@ -144,7 +147,6 @@ def classify_sql(sql: str) -> str:
     if not sql:
         return "unknown"
 
-    # SHOW / DESCRIBE / EXPLAIN — sqlparse가 unknown으로 분류하므로 먼저 처리
     if _SHOW_RE.match(sql):
         return "select"
 
@@ -187,7 +189,6 @@ def add_limit(sql: str, limit: int = 20000) -> str:
     """SELECT에 LIMIT이 없으면 강제 주입. SHOW / DESCRIBE / EXPLAIN은 스킵."""
     if classify_sql(sql) != "select":
         return sql
-    # SHOW / DESCRIBE / EXPLAIN — LIMIT 붙이면 문법 오류
     if _SHOW_RE.match(sql.strip()):
         return sql
     if re.search(r'\bLIMIT\b', sql, re.IGNORECASE):
@@ -196,7 +197,7 @@ def add_limit(sql: str, limit: int = 20000) -> str:
     return f"{sql_stripped} LIMIT {limit}"
 
 
-#  실행
+# 실행
 
 def run_select(engine: Engine, sql: str, limit: int = 20000) -> pd.DataFrame:
     guard_sql(sql, allow_write=False)
@@ -236,15 +237,14 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
         raise DbBuilderError(f"쓰기 실행 실패: {e}")
 
 
-#  LLM 호출 (NL2SQL)
+# LLM 호출 (NL2SQL)
 
 _NL2SQL_SYSTEM = (
     "당신은 MySQL 전문가입니다. "
-    "주어진 스키마를 바탕으로 사용자의 자연어 질의를 정확한 MySQL 쿼리로 변환하세요. "
-    "테이블 별칭은 IS, AS, BY, IN, ON 등 MySQL 예약어를 절대 사용하지 마세요. "
-    "공백이 포함된 컬럼명은 반드시 백틱(`)으로 감싸세요. "
-    "SQL 쿼리만 출력하고, 설명·주석·코드펜스(```)는 절대 포함하지 마세요. "
-    "세미콜론은 문장 끝에 한 번만 붙이세요."
+    "주어진 스키마로 자연어 질의에 대한 MySQL 쿼리를 반환한다."
+    "컬럼명에 공백( ) 대신 언더바(_)를 대신 사용한다"
+    "주석 없이 SQL 쿼리만 출력한다."
+    "세미콜론은 문장 끝에 한 번만 붙인다"
 )
 
 
@@ -293,7 +293,7 @@ def generate_sql(user_question: str, schema_prompt: str,
     return sql
 
 
-#  PDF 표 → 적재
+# PDF 표 → 적재
 
 def parse_markdown_tables(md_text: str) -> list[pd.DataFrame]:
     results: list[pd.DataFrame] = []
@@ -371,7 +371,6 @@ def load_dataframe(engine: Engine, df: pd.DataFrame,
     if df.empty:
         raise DbBuilderError("적재할 데이터가 없습니다 (DataFrame이 비어 있음).")
 
-    # 빈 문자열 → None 변환 (MySQL NULL로 적재)
     df = df.replace({"": None, "nan": None, "None": None})
 
     try:
@@ -389,7 +388,7 @@ def load_dataframe(engine: Engine, df: pd.DataFrame,
         raise DbBuilderError(f"테이블 적재 실패 ({table}): {e}")
 
 
-#  인라인 편집 → UPDATE 생성
+# 인라인 편집 → UPDATE 생성
 
 def diff_dataframes(original: pd.DataFrame,
                     edited: pd.DataFrame) -> pd.DataFrame:
@@ -450,7 +449,7 @@ def build_update_sqls(original: pd.DataFrame,
     return results
 
 
-#  DDL 정적 검사
+# DDL 정적 검사
 
 def preview_ddl(engine: Engine, sql: str) -> dict:
     guard_sql(sql, allow_write=True)
@@ -462,7 +461,6 @@ def preview_ddl(engine: Engine, sql: str) -> dict:
 
     existing_tables = list_tables(engine)
 
-    # CREATE TABLE
     m = re.match(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?', sql, re.IGNORECASE)
     if m:
         table          = m.group(1)
@@ -479,7 +477,6 @@ def preview_ddl(engine: Engine, sql: str) -> dict:
             findings.append({"level": "info", "msg": f"테이블 {table} 신규 생성"})
         return result
 
-    # DROP TABLE
     m = re.match(r'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?`?(\w+)`?', sql, re.IGNORECASE)
     if m:
         table          = m.group(1)
@@ -493,7 +490,6 @@ def preview_ddl(engine: Engine, sql: str) -> dict:
                               "msg": f"테이블 {table} 및 모든 데이터 영구 삭제"})
         return result
 
-    # ALTER TABLE
     m = re.match(r'ALTER\s+TABLE\s+`?(\w+)`?', sql, re.IGNORECASE)
     if m:
         table          = m.group(1)

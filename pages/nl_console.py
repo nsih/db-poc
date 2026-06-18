@@ -13,14 +13,17 @@ AI_ENDPOINT    = f"http://{AI_WORKER_IP}:{AI_WORKER_PORT}/v1/chat/completions"
 st.title("🗄️ NL 2 SQL Console")
 st.caption("자연어로 질의하면 SQL을 생성합니다. **생성된 SQL을 반드시 확인 후 실행하세요.**")
 
-# 자연어 입력 
+# 자연어 입력
 with st.form("nl_form"):
     question  = st.text_area("자연어 질의", height=80,
                              placeholder="예) 직원 테이블에서 부서가 IT인 사람 전부 조회해줘")
     submitted = st.form_submit_button("SQL 생성", type="primary")
 
 if submitted and question.strip():
+    # SQL 새로 생성 시 관련 세션 전체 초기화
+    gen = st.session_state.get("nl_sql_gen", 0) + 1
     reset_nl_state()
+    st.session_state["nl_sql_gen"] = gen
     with st.spinner("스키마 로딩 및 SQL 생성 중..."):
         try:
             schema_prompt = db_builder.get_schema_prompt(engine)
@@ -30,18 +33,15 @@ if submitted and question.strip():
                 model_name=AI_MODEL_NAME,
                 endpoint=AI_ENDPOINT,
             )
-            st.session_state["nl_sql"]     = sql
-            st.session_state["nl_kind"]    = db_builder.classify_sql(sql)
-            st.session_state["nl_sql_gen"] = st.session_state.get("nl_sql_gen", 0) + 1
+            st.session_state["nl_sql"]  = sql
+            st.session_state["nl_kind"] = db_builder.classify_sql(sql)
         except db_builder.DbBuilderError as e:
             st.error(f"SQL 생성 실패: {e}")
 
-# nl_done이 True면 여기서 처리 후 st.stop()으로 이하 블록 전체 차단
-
+# nl_done이 True면 완료 처리 후 st.stop()
 if st.session_state.get("nl_done"):
     st.success("작업 완료")
 
-    # UPDATE 완료 후 자동 조회
     target = st.session_state.get("nl_post_update_target")
     if target:
         try:
@@ -59,8 +59,7 @@ if st.session_state.get("nl_done"):
         st.rerun()
     st.stop()
 
-# 생성 SQL 표시 + 실행 
-
+# 생성 SQL 표시 + 실행
 if "nl_sql" not in st.session_state:
     st.stop()
 
@@ -69,10 +68,10 @@ kind = st.session_state["nl_kind"]
 gen  = st.session_state.get("nl_sql_gen", 0)
 
 st.markdown("#### 생성된 SQL")
-edited_sql = st.text_area("SQL (직접 수정 가능)", value=sql, height=240,
+edited_sql = st.text_area("SQL (직접 수정 가능)", value=sql, height=200,
                           key=f"nl_sql_editor_{gen}")
 
-# 수정된 SQL을 항상 세션에 반영
+# 수정된 SQL 세션 반영
 st.session_state["nl_sql"]  = edited_sql
 st.session_state["nl_kind"] = db_builder.classify_sql(edited_sql)
 kind = st.session_state["nl_kind"]
@@ -80,12 +79,11 @@ kind = st.session_state["nl_kind"]
 st.caption(f"구문 분류: **{kind.upper()}**")
 st.markdown("---")
 
-# SELECT 경로 
-
+# SELECT 경로
 if kind == "select":
     if st.button("▶ 조회 실행", type="primary"):
         for k in ("nl_df", "nl_df_orig", "nl_target_table",
-                  "nl_update_sqls", "nl_update_pending"):
+                  "nl_update_sqls", "nl_update_pending", "nl_save_as"):
             st.session_state.pop(k, None)
         st.session_state["nl_edit_gen"] = st.session_state.get("nl_edit_gen", 0) + 1
         try:
@@ -104,7 +102,7 @@ if kind == "select":
     target_table = st.session_state.get("nl_target_table")
     edit_gen     = st.session_state.get("nl_edit_gen", 0)
 
-    st.success(f"{len(df_orig)}행 조회됨")
+    st.success(f"✅ {len(df_orig)}행 조회됨")
 
     if target_table:
         st.caption("수정하려면 셀을 수정하고 **변경 반영** 버튼을 누르세요.")
@@ -150,7 +148,7 @@ if kind == "select":
 
         st.markdown("---")
         if "nl_update_pending" not in st.session_state:
-            if st.button("전체 실행 확정", type="primary"):
+            if st.button("✅ 전체 실행 확정", type="primary"):
                 st.session_state["nl_update_pending"] = True
                 st.rerun()
         else:
@@ -197,14 +195,14 @@ if kind == "select":
             )
         s1, s2 = st.columns(2)
         with s1:
-            if st.button("저장 실행", type="primary",
+            if st.button("✅ 저장 실행", type="primary",
                          disabled=not (new_table_name or "").strip(),
                          use_container_width=True):
                 try:
                     cnt = db_builder.load_dataframe(
                         engine, edited_df, new_table_name, if_exists=if_exists
                     )
-                    st.success(f"`{new_table_name}` 테이블에 {cnt}행 저장 완료")
+                    st.success(f"✅ `{new_table_name}` 테이블에 {cnt}행 저장 완료")
                     st.session_state.pop("nl_save_as", None)
                     st.rerun()
                 except db_builder.DbBuilderError as e:
@@ -214,18 +212,14 @@ if kind == "select":
                 st.session_state.pop("nl_save_as", None)
                 st.rerun()
 
-# DDL / DML 경로 
-
+# DDL / DML 경로
 elif kind in ("ddl", "dml"):
     st.warning("⚠️ 쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
 
     if kind == "ddl":
         if re.search(
-            r'\bALTER\s+TABLE\b.+\b(DROP\s+COLUMN|DROP\s+PRIMARY\s+KEY)\b',
-            edited_sql, re.IGNORECASE | re.DOTALL
+            r'\bDROP\s+TABLE\b', edited_sql, re.IGNORECASE
         ):
-            st.error("컬럼/PK 삭제가 포함된 ALTER입니다. 해당 데이터는 영구 삭제됩니다.")
-        elif re.search(r'\bDROP\s+TABLE\b', edited_sql, re.IGNORECASE):
             st.error("테이블 전체 삭제입니다. 테이블과 데이터가 영구 삭제됩니다.")
 
     col1, col2 = st.columns(2)
@@ -265,7 +259,7 @@ elif kind in ("ddl", "dml"):
 
     with col2:
         if "nl_pending_commit" not in st.session_state:
-            if st.button("실행 확정", type="primary", use_container_width=True):
+            if st.button("✅ 실행 확정", type="primary", use_container_width=True):
                 st.session_state["nl_pending_commit"] = True
                 st.session_state.pop("nl_ddl_preview", None)
                 st.rerun()
@@ -276,7 +270,7 @@ elif kind in ("ddl", "dml"):
                 if st.button("예, 실행", type="primary", use_container_width=True):
                     try:
                         result = db_builder.run_write(engine, edited_sql, commit=True)
-                        st.success(f"실행 완료 (영향 행: {result['rowcount']})")
+                        st.success(f"✅ 실행 완료 (영향 행: {result['rowcount']})")
                         st.session_state.pop("nl_pending_commit", None)
                         st.session_state["nl_done"] = True
                         auto_select(engine, edited_sql)
