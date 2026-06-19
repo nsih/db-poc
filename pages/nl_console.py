@@ -48,13 +48,13 @@ if st.session_state.get("nl_done"):
             df_after = db_builder.run_select(
                 engine, f"SELECT * FROM `{target}`", limit=50
             )
-            st.markdown(f"#### `{target}` 현재 상태 (최대 50행)")
+            st.markdown(f"#### `{target}` 현재 상태 상위 50행")
             st.dataframe(df_after, use_container_width=True)
             st.caption(f"{len(df_after)}행 조회됨")
         except db_builder.DbBuilderError as e:
             st.warning(f"자동 조회 실패: {e}")
 
-    if st.button("🔄 다음 작업 실행", type="primary"):
+    if st.button("다음 작업 실행", type="primary"):
         reset_all()
         st.rerun()
     st.stop()
@@ -83,8 +83,7 @@ st.markdown("---")
 if kind == "select":
     if st.button("▶ 조회 실행", type="primary"):
         for k in ("nl_df", "nl_df_orig", "nl_target_table",
-                  "nl_update_sqls", "nl_update_pending", "nl_save_as",
-                  "nl_target_is_view"):
+                  "nl_update_sqls", "nl_update_pending", "nl_save_as"):
             st.session_state.pop(k, None)
         st.session_state["nl_edit_gen"] = st.session_state.get("nl_edit_gen", 0) + 1
         try:
@@ -92,16 +91,7 @@ if kind == "select":
             st.session_state["nl_df"]      = df
             st.session_state["nl_df_orig"] = df.copy()
             m = re.search(r"FROM\s+`?(\w+)`?", edited_sql.rstrip().rstrip(";"), re.IGNORECASE)
-            target_name = m.group(1) if m else None
-            st.session_state["nl_target_table"] = target_name
-
-            # 뷰 여부 판별
-            try:
-                current_views = db_builder.list_views(engine)
-            except db_builder.DbBuilderError:
-                current_views = []
-            st.session_state["nl_target_is_view"] = (target_name in current_views)
-
+            st.session_state["nl_target_table"] = m.group(1) if m else None
         except db_builder.DbBuilderError as e:
             st.error(f"조회 실패: {e}")
 
@@ -110,17 +100,11 @@ if kind == "select":
 
     df_orig      = st.session_state["nl_df_orig"]
     target_table = st.session_state.get("nl_target_table")
-    is_view      = st.session_state.get("nl_target_is_view", False)
     edit_gen     = st.session_state.get("nl_edit_gen", 0)
 
-    st.success(f"✅ {len(df_orig)}행 조회됨")
+    st.success(f"{len(df_orig)}행 조회됨")
 
-    if is_view:
-        # 뷰 — 읽기 전용 표시
-        st.info("뷰 조회 결과입니다. 뷰는 편집할 수 없습니다.")
-        st.dataframe(df_orig, use_container_width=True)
-
-    elif target_table:
+    if target_table:
         st.caption("수정하려면 셀을 수정하고 **변경 반영** 버튼을 누르세요.")
         edited_df = st.data_editor(
             df_orig, use_container_width=True,
@@ -131,8 +115,7 @@ if kind == "select":
         edited_df = df_orig
         st.dataframe(df_orig, use_container_width=True)
 
-    # 편집 버튼은 일반 테이블 대상일 때만 표시
-    if target_table and not is_view:
+    if target_table:
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
             if st.button("변경 반영", use_container_width=True):
@@ -205,9 +188,11 @@ if kind == "select":
         if_exists = "fail"
         if new_table_name and new_table_name in existing_tables:
             st.warning(f"`{new_table_name}` 테이블이 이미 존재합니다.")
-            if_exists = st.radio("처리 방식", ["fail", "replace", "append"],
-                                 captions=["중단", "덮어쓰기", "이어붙이기"],
-                                 horizontal=True, key="nl_save_as_ifexists")
+            if_exists = st.radio(
+                "처리 방식", ["fail", "replace", "append"],
+                captions=["중단", "덮어쓰기", "이어붙이기"],
+                horizontal=True, key="nl_save_as_ifexists"
+            )
         s1, s2 = st.columns(2)
         with s1:
             if st.button("저장 실행", type="primary",

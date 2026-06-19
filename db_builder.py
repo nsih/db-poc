@@ -33,10 +33,6 @@ def _load_secrets() -> dict:
 # 연결
 
 def get_engine() -> Engine:
-    """secrets.toml의 DB 개별 파라미터로 SQLAlchemy 엔진 생성.
-    URL 방식은 특수문자 패스워드에서 파싱 오류가 발생하므로
-    create_engine URL + connect_args 방식으로 우회한다.
-    캐싱은 호출측(db_app)이 @st.cache_resource로 담당."""
     secrets = _load_secrets()
     host     = secrets.get("DB_HOST", "127.0.0.1")
     port     = int(secrets.get("DB_PORT", 3306))
@@ -90,8 +86,6 @@ def get_schema(engine: Engine, table: str) -> dict:
 
 
 def get_view_definition(engine: Engine, view: str) -> str:
-    """SHOW CREATE VIEW로 뷰 정의의 SELECT 절만 추출해 반환한다.
-    실패 시 빈 문자열 반환 — 스키마 프롬프트 생성을 막지 않는다."""
     try:
         with engine.connect() as conn:
             row = conn.execute(text(f"SHOW CREATE VIEW `{view}`")).fetchone()
@@ -290,7 +284,7 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
 _NL2SQL_SYSTEM = (
     "당신은 MySQL 전문가로 동작한다."
     "주어진 스키마로 자연어 질의에 대한 MySQL 쿼리를 반환한다."
-    "컬럼명에 공백( ) 대신 언더바(_)를 대신 사용한다."
+    "컬럼명 텍스트에 BLANK는 허용되지 않는다."
     "주석 없이 SQL 쿼리만 출력한다."
     "세미콜론은 문장 끝에 한 번만 붙인다."
 )
