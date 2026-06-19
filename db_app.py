@@ -10,10 +10,10 @@ except db_builder.DbBuilderError as e:
     st.error(f"DB 연결 실패: {e}")
     st.stop()
 
-# 사이드바 — 테이블 목록
+# 사이드바 — 테이블 / 뷰 목록
 with st.sidebar:
     st.markdown("---")
-    st.caption("📋 테이블 목록")
+    st.caption("테이블 목록")
     try:
         tables = db_builder.list_tables(engine)
         if tables:
@@ -21,6 +21,17 @@ with st.sidebar:
                 st.caption(f"• {t}")
         else:
             st.caption("(테이블 없음)")
+    except Exception:
+        st.caption("조회 실패")
+
+    st.caption("뷰 목록")
+    try:
+        views = db_builder.list_views(engine)
+        if views:
+            for v in views:
+                st.caption(f"◦ {v}")
+        else:
+            st.caption("(뷰 없음)")
     except Exception:
         st.caption("조회 실패")
 
