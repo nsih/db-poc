@@ -69,6 +69,14 @@ def list_tables(engine: Engine) -> list[str]:
         raise DbBuilderError(f"테이블 목록 조회 실패: {e}")
 
 
+def list_views(engine: Engine) -> list[str]:
+    """현재 DB의 뷰 이름 목록을 반환한다."""
+    try:
+        return inspect(engine).get_view_names()
+    except Exception as e:
+        raise DbBuilderError(f"뷰 목록 조회 실패: {e}")
+
+
 def get_schema(engine: Engine, table: str) -> dict:
     try:
         insp = inspect(engine)
@@ -81,6 +89,24 @@ def get_schema(engine: Engine, table: str) -> dict:
         raise DbBuilderError(f"스키마 조회 실패 ({table}): {e}")
 
 
+def get_view_definition(engine: Engine, view: str) -> str:
+    """SHOW CREATE VIEW로 뷰 정의의 SELECT 절만 추출해 반환한다.
+    실패 시 빈 문자열 반환 — 스키마 프롬프트 생성을 막지 않는다."""
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text(f"SHOW CREATE VIEW `{view}`")).fetchone()
+        if not row:
+            return ""
+        # row[1]: 전체 CREATE ALGORITHM=... VIEW ... AS SELECT ...
+        # SELECT 절 이후만 잘라내어 가독성을 높인다
+        raw = str(row[1])
+        m = re.search(r'\bAS\s+(SELECT\b.+)', raw, re.IGNORECASE | re.DOTALL)
+        return m.group(1).strip() if m else raw
+    except Exception as e:
+        logger.warning(f"뷰 정의 조회 실패 ({view}): {e}")
+        return ""
+
+
 def get_schema_prompt(engine: Engine,
                       tables: list[str] | None = None,
                       sample_rows: int = 3) -> str:
@@ -88,6 +114,8 @@ def get_schema_prompt(engine: Engine,
         tables = list_tables(engine)
 
     parts: list[str] = []
+
+    # 테이블 스키마
     for table in tables:
         schema = get_schema(engine, table)
 
@@ -124,6 +152,22 @@ def get_schema_prompt(engine: Engine,
             except Exception as e:
                 logger.warning(f"샘플 행 조회 실패 ({table}): {e}")
 
+        parts.append("")
+
+    # 뷰 정의 — LLM이 뷰를 인식하고 SELECT에 활용할 수 있도록 포함
+    try:
+        views = list_views(engine)
+    except DbBuilderError:
+        views = []
+
+    if views:
+        parts.append("-- 뷰 목록 (조회 전용):")
+        for view in views:
+            definition = get_view_definition(engine, view)
+            if definition:
+                parts.append(f"-- VIEW `{view}` AS {definition}")
+            else:
+                parts.append(f"-- VIEW `{view}`")
         parts.append("")
 
     return "\n".join(parts).strip()
@@ -224,12 +268,16 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
                 "message": "DDL은 미리보기가 지원되지 않습니다. SQL을 확인 후 실행하세요."}
 
     try:
+        if not commit:
+            # rollback 경로 — engine.connect()로 트랜잭션을 커밋하지 않고 종료
+            with engine.connect() as conn:
+                result   = conn.execute(text(sql))
+                rowcount = result.rowcount if result.rowcount is not None else -1
+            return {"rowcount": rowcount, "committed": False}
+
         with engine.begin() as conn:
             result   = conn.execute(text(sql))
             rowcount = result.rowcount if result.rowcount is not None else -1
-            if not commit:
-                conn.rollback()
-                return {"rowcount": rowcount, "committed": False}
             return {"rowcount": rowcount, "committed": True}
     except DbBuilderError:
         raise
@@ -240,11 +288,11 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
 # LLM 호출 (NL2SQL)
 
 _NL2SQL_SYSTEM = (
-    "당신은 MySQL 전문가입니다. "
+    "당신은 MySQL 전문가로 동작한다."
     "주어진 스키마로 자연어 질의에 대한 MySQL 쿼리를 반환한다."
-    "컬럼명에 공백( ) 대신 언더바(_)를 대신 사용한다"
+    "컬럼명에 공백( ) 대신 언더바(_)를 대신 사용한다."
     "주석 없이 SQL 쿼리만 출력한다."
-    "세미콜론은 문장 끝에 한 번만 붙인다"
+    "세미콜론은 문장 끝에 한 번만 붙인다."
 )
 
 
