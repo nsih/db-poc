@@ -48,7 +48,7 @@ if st.session_state.get("nl_done"):
             df_after = db_builder.run_select(
                 engine, f"SELECT * FROM `{target}`", limit=50
             )
-            st.markdown(f"#### 📋 `{target}` 현재 상태 (최대 50행)")
+            st.markdown(f"#### `{target}` 현재 상태 (최대 50행)")
             st.dataframe(df_after, use_container_width=True)
             st.caption(f"{len(df_after)}행 조회됨")
         except db_builder.DbBuilderError as e:
@@ -117,7 +117,7 @@ if kind == "select":
 
     if is_view:
         # 뷰 — 읽기 전용 표시
-        st.info("👁 뷰 조회 결과입니다. 뷰는 편집할 수 없습니다.")
+        st.info("뷰 조회 결과입니다. 뷰는 편집할 수 없습니다.")
         st.dataframe(df_orig, use_container_width=True)
 
     elif target_table:
@@ -135,7 +135,7 @@ if kind == "select":
     if target_table and not is_view:
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
-            if st.button("📝 변경 반영", use_container_width=True):
+            if st.button("변경 반영", use_container_width=True):
                 st.session_state.pop("nl_save_as", None)
                 try:
                     update_sqls = db_builder.build_update_sqls(
@@ -149,7 +149,7 @@ if kind == "select":
                 except db_builder.DbBuilderError as e:
                     st.error(f"변경 감지 실패: {e}")
         with btn_col2:
-            if st.button("💾 새 테이블로 저장", use_container_width=True):
+            if st.button("새 테이블로 저장", use_container_width=True):
                 st.session_state.pop("nl_update_sqls", None)
                 st.session_state["nl_save_as"] = True
                 st.rerun()
@@ -160,12 +160,12 @@ if kind == "select":
         st.markdown(f"#### 변경 {len(update_sqls)}건 — 생성된 UPDATE SQL")
         for item in update_sqls:
             if item["warning"]:
-                st.warning(f"⚠️ {item['warning']}")
+                st.warning(f"{item['warning']}")
             st.code(item["sql"], language="sql")
 
         st.markdown("---")
         if "nl_update_pending" not in st.session_state:
-            if st.button("✅ 전체 실행 확정", type="primary"):
+            if st.button("전체 실행 확정", type="primary"):
                 st.session_state["nl_update_pending"] = True
                 st.rerun()
         else:
@@ -204,20 +204,20 @@ if kind == "select":
         )
         if_exists = "fail"
         if new_table_name and new_table_name in existing_tables:
-            st.warning(f"⚠️ `{new_table_name}` 테이블이 이미 존재합니다.")
+            st.warning(f"`{new_table_name}` 테이블이 이미 존재합니다.")
             if_exists = st.radio("처리 방식", ["fail", "replace", "append"],
                                  captions=["중단", "덮어쓰기", "이어붙이기"],
                                  horizontal=True, key="nl_save_as_ifexists")
         s1, s2 = st.columns(2)
         with s1:
-            if st.button("✅ 저장 실행", type="primary",
+            if st.button("저장 실행", type="primary",
                          disabled=not (new_table_name or "").strip(),
                          use_container_width=True):
                 try:
                     cnt = db_builder.load_dataframe(
                         engine, edited_df, new_table_name, if_exists=if_exists
                     )
-                    st.success(f"✅ `{new_table_name}` 테이블에 {cnt}행 저장 완료")
+                    st.success(f"`{new_table_name}` 테이블에 {cnt}행 저장 완료")
                     st.session_state.pop("nl_save_as", None)
                     st.rerun()
                 except db_builder.DbBuilderError as e:
@@ -229,7 +229,7 @@ if kind == "select":
 
 # DDL / DML 경로
 elif kind in ("ddl", "dml"):
-    st.warning("⚠️ 쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
+    st.warning("쓰기 작업입니다. SQL을 꼼꼼히 확인하세요.")
 
     if kind == "ddl":
         if re.search(
@@ -241,7 +241,7 @@ elif kind in ("ddl", "dml"):
 
     with col1:
         if kind == "dml":
-            if st.button("🔍 미리보기 (rollback)", use_container_width=True):
+            if st.button("미리보기 (rollback)", use_container_width=True):
                 try:
                     result = db_builder.run_write(engine, edited_sql, commit=False)
                     msg = result.get("message", "")
@@ -252,7 +252,7 @@ elif kind in ("ddl", "dml"):
                 except db_builder.DbBuilderError as e:
                     st.error(f"미리보기 실패: {e}")
         else:
-            if st.button("🔍 사전 검사", use_container_width=True):
+            if st.button("사전 검사", use_container_width=True):
                 try:
                     preview = db_builder.preview_ddl(engine, edited_sql)
                     st.session_state["nl_ddl_preview"] = preview
@@ -274,7 +274,7 @@ elif kind in ("ddl", "dml"):
 
     with col2:
         if "nl_pending_commit" not in st.session_state:
-            if st.button("✅ 실행 확정", type="primary", use_container_width=True):
+            if st.button("실행 확정", type="primary", use_container_width=True):
                 st.session_state["nl_pending_commit"] = True
                 st.session_state.pop("nl_ddl_preview", None)
                 st.rerun()
@@ -285,7 +285,7 @@ elif kind in ("ddl", "dml"):
                 if st.button("예, 실행", type="primary", use_container_width=True):
                     try:
                         result = db_builder.run_write(engine, edited_sql, commit=True)
-                        st.success(f"✅ 실행 완료 (영향 행: {result['rowcount']})")
+                        st.success(f"실행 완료 (영향 행: {result['rowcount']})")
                         st.session_state.pop("nl_pending_commit", None)
                         st.session_state["nl_done"] = True
                         auto_select(engine, edited_sql)
