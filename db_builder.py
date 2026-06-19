@@ -33,6 +33,10 @@ def _load_secrets() -> dict:
 # 연결
 
 def get_engine() -> Engine:
+    """secrets.toml의 DB 개별 파라미터로 SQLAlchemy 엔진 생성.
+    URL 방식은 특수문자 패스워드에서 파싱 오류가 발생하므로
+    create_engine URL + connect_args 방식으로 우회한다.
+    캐싱은 호출측(db_app)이 @st.cache_resource로 담당."""
     secrets = _load_secrets()
     host     = secrets.get("DB_HOST", "127.0.0.1")
     port     = int(secrets.get("DB_PORT", 3306))
@@ -65,14 +69,6 @@ def list_tables(engine: Engine) -> list[str]:
         raise DbBuilderError(f"테이블 목록 조회 실패: {e}")
 
 
-def list_views(engine: Engine) -> list[str]:
-    """현재 DB의 뷰 이름 목록을 반환한다."""
-    try:
-        return inspect(engine).get_view_names()
-    except Exception as e:
-        raise DbBuilderError(f"뷰 목록 조회 실패: {e}")
-
-
 def get_schema(engine: Engine, table: str) -> dict:
     try:
         insp = inspect(engine)
@@ -85,22 +81,6 @@ def get_schema(engine: Engine, table: str) -> dict:
         raise DbBuilderError(f"스키마 조회 실패 ({table}): {e}")
 
 
-def get_view_definition(engine: Engine, view: str) -> str:
-    try:
-        with engine.connect() as conn:
-            row = conn.execute(text(f"SHOW CREATE VIEW `{view}`")).fetchone()
-        if not row:
-            return ""
-        # row[1]: 전체 CREATE ALGORITHM=... VIEW ... AS SELECT ...
-        # SELECT 절 이후만 잘라내어 가독성을 높인다
-        raw = str(row[1])
-        m = re.search(r'\bAS\s+(SELECT\b.+)', raw, re.IGNORECASE | re.DOTALL)
-        return m.group(1).strip() if m else raw
-    except Exception as e:
-        logger.warning(f"뷰 정의 조회 실패 ({view}): {e}")
-        return ""
-
-
 def get_schema_prompt(engine: Engine,
                       tables: list[str] | None = None,
                       sample_rows: int = 3) -> str:
@@ -108,8 +88,6 @@ def get_schema_prompt(engine: Engine,
         tables = list_tables(engine)
 
     parts: list[str] = []
-
-    # 테이블 스키마
     for table in tables:
         schema = get_schema(engine, table)
 
@@ -146,22 +124,6 @@ def get_schema_prompt(engine: Engine,
             except Exception as e:
                 logger.warning(f"샘플 행 조회 실패 ({table}): {e}")
 
-        parts.append("")
-
-    # 뷰 정의 — LLM이 뷰를 인식하고 SELECT에 활용할 수 있도록 포함
-    try:
-        views = list_views(engine)
-    except DbBuilderError:
-        views = []
-
-    if views:
-        parts.append("-- 뷰 목록 (조회 전용):")
-        for view in views:
-            definition = get_view_definition(engine, view)
-            if definition:
-                parts.append(f"-- VIEW `{view}` AS {definition}")
-            else:
-                parts.append(f"-- VIEW `{view}`")
         parts.append("")
 
     return "\n".join(parts).strip()
@@ -222,7 +184,6 @@ def guard_sql(sql: str, allow_write: bool) -> None:
         if kind != "select":
             raise DbBuilderError("조회 경로에서는 SELECT / SHOW / DESCRIBE / EXPLAIN만 허용됩니다.")
 
-
 def add_limit(sql: str, limit: int = 20000) -> str:
     """SELECT에 LIMIT이 없으면 강제 주입. SHOW / DESCRIBE / EXPLAIN은 스킵."""
     if classify_sql(sql) != "select":
@@ -282,12 +243,40 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
 # LLM 호출 (NL2SQL)
 
 _NL2SQL_SYSTEM = (
-    "당신은 MySQL 전문가로 동작한다."
+    "당신은 MySQL 전문가입니다. "
     "주어진 스키마로 자연어 질의에 대한 MySQL 쿼리를 반환한다."
-    "컬럼명 텍스트에 BLANK는 허용되지 않는다."
+    "컬럼명에 공백( ) 대신 언더바(_)를 대신 사용한다"
+    "별칭(AS 뒤에 오는 이름)에는 절대 공백을 사용하지 않는다. "
+    "사용자 질의에 공백이 포함된 단어가 있어도, 별칭에는 반드시 언더바(_)로 변환해 적용한다. "
+    "예시: 사용자가 '단말기 개수'라고 표현해도 별칭은 AS 단말기_개수 로 작성한다."
     "주석 없이 SQL 쿼리만 출력한다."
-    "세미콜론은 문장 끝에 한 번만 붙인다."
+    "세미콜론은 문장 끝에 한 번만 붙인다"
 )
+
+_ALIAS_STOP_WORDS = {"FROM", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT"}
+
+def _quote_unquoted_alias_with_space(sql: str) -> str:
+    pattern = re.compile(r'\b(AS)\s+([^,;]+?)(?=[,;]|$)', re.IGNORECASE)
+
+    def _repl(m: re.Match) -> str:
+        as_kw = m.group(1)
+        rest  = m.group(2)
+        tokens = rest.split()
+
+        collected: list[str] = []
+        for tok in tokens:
+            if tok.upper() in _ALIAS_STOP_WORDS:
+                break
+            collected.append(tok)
+
+        if len(collected) < 2:
+            return m.group(0)
+
+        alias     = " ".join(collected)
+        remainder = rest[len(alias):]
+        return f"{as_kw} `{alias}`{remainder}"
+
+    return pattern.sub(_repl, sql)
 
 
 def generate_sql(user_question: str, schema_prompt: str,
@@ -331,6 +320,8 @@ def generate_sql(user_question: str, schema_prompt: str,
 
     if not sql:
         raise DbBuilderError("LLM이 SQL을 생성하지 못했습니다.")
+
+    sql = _quote_unquoted_alias_with_space(sql)
 
     return sql
 
