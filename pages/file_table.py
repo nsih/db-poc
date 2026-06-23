@@ -77,7 +77,8 @@ elif step == "review":
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("다음 →", type="primary", disabled=edited.empty):
+            if st.button("다음 →", type="primary",
+                         disabled=edited.empty or edited.shape[1] == 0):
                 st.session_state["pdf_table_idx"] = 0
                 st.session_state["pdf_step"] = "type_confirm"
                 st.rerun()
@@ -112,6 +113,9 @@ elif step == "review":
             if drop_cols_m:
                 merged_df = merged_df.drop(columns=drop_cols_m)
 
+            if merged_df.shape[1] == 0:
+                st.error("모든 컬럼을 제외했습니다. 최소 1개 컬럼은 남겨야 합니다.")
+
             st.markdown(f"#### 통합 결과 검수 ({len(merged_df)}행 × {len(merged_df.columns)}열, 셀·컬럼명 직접 수정 가능)")
             edited_df = st.data_editor(
                 merged_df, num_rows="dynamic",
@@ -126,7 +130,8 @@ elif step == "review":
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("다음: 컬럼 타입 지정 →", type="primary"):
+                if st.button("다음: 컬럼 타입 지정 →", type="primary",
+                             disabled=edited_df.shape[1] == 0):
                     st.session_state["pdf_step"] = "type_confirm"
                     st.rerun()
             with col2:
@@ -150,6 +155,9 @@ elif step == "review":
             )
             display_df = tables[idx].drop(columns=drop_cols_s) if drop_cols_s else tables[idx]
 
+            if display_df.shape[1] == 0:
+                st.error("모든 컬럼을 제외했습니다. 최소 1개 컬럼은 남겨야 합니다.")
+
             st.markdown(f"#### 표 {idx+1} 검수 (셀·컬럼명 직접 수정 가능)")
             edited_df = st.data_editor(
                 display_df, num_rows="dynamic",
@@ -164,7 +172,8 @@ elif step == "review":
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("다음: 컬럼 타입 지정 →", type="primary"):
+                if st.button("다음: 컬럼 타입 지정 →", type="primary",
+                             disabled=edited_df.shape[1] == 0):
                     st.session_state["pdf_table_idx"] = idx
                     st.session_state["pdf_step"] = "type_confirm"
                     st.rerun()
@@ -184,6 +193,13 @@ elif step == "type_confirm":
         st.rerun()
 
     df = tables[idx]
+    if df.shape[1] == 0:
+        st.error("표에 컬럼이 없습니다. 검수 단계로 돌아가 컬럼을 확인해주세요.")
+        if st.button("← 검수로 돌아가기"):
+            st.session_state["pdf_step"] = "review"
+            st.rerun()
+        st.stop()
+
     st.markdown(f"#### 컬럼 타입 지정 (표 {idx+1})")
 
     inferred  = db_builder.infer_column_types(df)

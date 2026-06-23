@@ -149,7 +149,7 @@ def classify_sql(sql: str) -> str:
 
     if _SHOW_RE.match(sql):
         return "select"
-
+    
     try:
         parsed = sqlparse.parse(sql)
         if not parsed:
@@ -374,8 +374,7 @@ def parse_markdown_tables(md_text: str) -> list[pd.DataFrame]:
 
 
 _DTYPE_MAP: dict[str, str] = {
-    "int64":   "BIGINT",
-    "int32":   "INT",
+    "int64":   "INT",
     "float64": "DOUBLE",
     "float32": "FLOAT",
     "bool":    "TINYINT(1)",
