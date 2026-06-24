@@ -10,13 +10,13 @@ AI_WORKER_PORT = st.secrets.get("AI_WORKER_PORT", 1234)
 AI_MODEL_NAME  = st.secrets.get("AI_MODEL_NAME", "")
 AI_ENDPOINT    = f"http://{AI_WORKER_IP}:{AI_WORKER_PORT}/v1/chat/completions"
 
-st.title("🗄️ NL 2 SQL Console")
-st.caption("자연어로 질의하면 SQL을 생성합니다. **생성된 SQL을 반드시 확인 후 실행하세요.**")
+st.title("NL 2 SQL Console")
+st.caption("자연어로 질의하면 쿼리를 생성합니다. **생성된 쿼리를 확인 후 실행해주세요.**")
 
 # 자연어 입력
 with st.form("nl_form"):
     question  = st.text_area("자연어 질의", height=80,
-                             placeholder="예) 직원 테이블에서 부서가 IT인 사람 전부 조회해줘")
+                             placeholder="예) '~'테이블에서 '~'가 '~'인 테이터 전부 삭제해줘")
     submitted = st.form_submit_button("SQL 생성", type="primary")
 
 if submitted and question.strip():

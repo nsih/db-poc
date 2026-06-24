@@ -71,8 +71,7 @@ elif step == "review":
 
         st.markdown("#### 빈 그리드로 수동 입력")
         empty_df = pd.DataFrame(columns=["컬럼1", "컬럼2", "컬럼3"])
-        edited   = st.data_editor(empty_df, num_rows="dynamic",
-                                  use_container_width=True, key="manual_grid")
+        edited   = st.data_editor(empty_df, num_rows="dynamic", use_container_width=True, key="manual_grid")
         st.session_state["pdf_tables"] = [edited] if not edited.empty else []
 
         col1, col2 = st.columns(2)
@@ -115,7 +114,6 @@ elif step == "review":
 
             if merged_df.shape[1] == 0:
                 st.error("모든 컬럼을 제외했습니다. 최소 1개 컬럼은 남겨야 합니다.")
-
             st.markdown(f"#### 통합 결과 검수 ({len(merged_df)}행 × {len(merged_df.columns)}열, 셀·컬럼명 직접 수정 가능)")
             edited_df = st.data_editor(
                 merged_df, num_rows="dynamic",
@@ -138,7 +136,6 @@ elif step == "review":
                 if st.button("처음으로"):
                     reset_pdf_state()
                     st.rerun()
-
         else:
             idx = st.session_state.get("pdf_table_idx", 0)
             if len(tables) > 1:
