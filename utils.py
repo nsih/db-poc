@@ -49,3 +49,4 @@ def reset_pdf_state() -> None:
 def reset_all() -> None:
     reset_nl_state()
     reset_pdf_state()
+    st.session_state.pop("quick_view_table", None)  # 추가

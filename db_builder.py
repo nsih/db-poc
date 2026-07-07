@@ -135,8 +135,7 @@ _DANGEROUS_PATTERNS = re.compile(
     r'\b(DROP\s+DATABASE|DROP\s+SCHEMA|TRUNCATE|'
     r'DROP\s+USER|GRANT|REVOKE|SHUTDOWN|'
     r'LOAD\s+DATA|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b',
-    re.IGNORECASE,
-)
+    re.IGNORECASE | re.MULTILINE)
 
 _SHOW_RE = re.compile(r'^\s*(SHOW|DESCRIBE|DESC|EXPLAIN)\b', re.IGNORECASE)
 
@@ -244,13 +243,15 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
 
 _NL2SQL_SYSTEM = (
     "당신은 MySQL 전문가입니다. "
-    "주어진 스키마로 자연어 질의에 대한 MySQL 쿼리를 반환한다."
-    "컬럼명에 공백( ) 대신 언더바(_)를 대신 사용한다"
+    "주어진 스키마로 자연어 질의에 대한 MySQL 쿼리를 반환한다. "
+    "테이블명과 컬럼명은 반드시 백틱(`)으로 감싼다."
+    "별칭(AS)에는 공백 대신 언더바(_)를 사용한다. "
     "별칭(AS 뒤에 오는 이름)에는 절대 공백을 사용하지 않는다. "
     "사용자 질의에 공백이 포함된 단어가 있어도, 별칭에는 반드시 언더바(_)로 변환해 적용한다. "
-    "예시: 사용자가 '단말기 개수'라고 표현해도 별칭은 AS 단말기_개수 로 작성한다."
-    "주석 없이 SQL 쿼리만 출력한다."
-    "세미콜론은 문장 끝에 한 번만 붙인다"
+    "예시: 사용자가 '단말기 개수'라고 표현해도 별칭은 AS 단말기_개수 로 작성한다. "
+    "파라미터 플레이스홀더(?)는 사용하지 않는다. 값은 SQL에 직접 리터럴로 작성한다. "
+    "주석 없이 SQL 쿼리만 출력한다. "
+    "세미콜론은 문장 끝에 한 번만 붙인다. "
 )
 
 _ALIAS_STOP_WORDS = {"FROM", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT"}
@@ -321,6 +322,13 @@ def generate_sql(user_question: str, schema_prompt: str,
     if not sql:
         raise DbBuilderError("LLM이 SQL을 생성하지 못했습니다.")
 
+    sql_no_strings = re.sub(r"'[^']*'", "''", sql)
+    if '?' in sql_no_strings:
+        raise DbBuilderError(
+            "LLM이 값을 특정하지 못해 플레이스홀더(?)를 생성했습니다. "
+            "질의에 구체적인 값을 포함해 다시 시도해주세요.\n"
+            "예) '설치 날짜가 ? 인 행의 설치 날짜를 NULL로 변경해줘'"
+        )
     sql = _quote_unquoted_alias_with_space(sql)
 
     return sql
@@ -402,7 +410,7 @@ def load_dataframe(engine: Engine, df: pd.DataFrame,
                    table: str, if_exists: str = "fail") -> int:
     if df.empty:
         raise DbBuilderError("적재할 데이터가 없습니다 (DataFrame이 비어 있음).")
-
+    
     df = df.replace({"": None, "nan": None, "None": None})
 
     try:

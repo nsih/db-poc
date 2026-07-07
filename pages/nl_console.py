@@ -234,6 +234,7 @@ elif kind in ("ddl", "dml"):
                         st.info(msg)
                     else:
                         st.info(f"예상 영향 행 수: {result['rowcount']}행 (미커밋)")
+                    auto_select(engine, edited_sql)
                 except db_builder.DbBuilderError as e:
                     st.error(f"미리보기 실패: {e}")
         else:
