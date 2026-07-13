@@ -146,6 +146,7 @@ if kind == "select":
                 st.warning(f"{item['warning']}")
             st.code(item["sql"], language="sql")
 
+        st.caption("전체 변경이 단일 트랜잭션으로 실행됩니다. 하나라도 실패하면 전체 롤백됩니다.")
         st.markdown("---")
         if "nl_update_pending" not in st.session_state:
             if st.button("전체 실행 확정", type="primary"):
@@ -156,21 +157,19 @@ if kind == "select":
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("예, 실행", type="primary", use_container_width=True):
-                    errors = []
-                    for item in update_sqls:
-                        try:
-                            db_builder.run_write(engine, item["sql"], commit=True)
-                        except db_builder.DbBuilderError as e:
-                            errors.append(str(e))
-                    st.session_state.pop("nl_update_sqls", None)
-                    st.session_state.pop("nl_update_pending", None)
-                    if errors:
-                        for err in errors:
-                            st.error(f"실행 실패: {err}")
-                    else:
+                    try:
+                        result = db_builder.run_write_batch(
+                            engine, [item["sql"] for item in update_sqls]
+                        )
+                        st.session_state.pop("nl_update_sqls", None)
+                        st.session_state.pop("nl_update_pending", None)
                         st.session_state["nl_done"] = True
                         st.session_state["nl_post_update_target"] = target_table
+                        st.session_state["nl_last_rowcount"] = result["rowcount"]
                         st.rerun()
+                    except db_builder.DbBuilderError as e:
+                        st.error(f"실행 실패 (전체 롤백됨): {e}")
+                        st.session_state.pop("nl_update_pending", None)
             with c2:
                 if st.button("취소", use_container_width=True):
                     st.session_state.pop("nl_update_sqls", None)

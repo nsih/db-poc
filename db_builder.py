@@ -240,6 +240,29 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
     except Exception as e:
         raise DbBuilderError(f"쓰기 실행 실패: {e}")
 
+def run_write_batch(engine: Engine, sqls: list[str]) -> dict:
+    if not sqls:
+        raise DbBuilderError("실행할 SQL이 없습니다.")
+
+    for sql in sqls:
+        guard_sql(sql, allow_write=True)
+        if classify_sql(sql) != "dml":
+            raise DbBuilderError(
+                "배치 실행은 DML(INSERT/UPDATE/DELETE)만 지원합니다."
+            )
+
+    total = 0
+    try:
+        with engine.begin() as conn:
+            for sql in sqls:
+                result = conn.execute(text(sql))
+                if result.rowcount is not None and result.rowcount > 0:
+                    total += result.rowcount
+        return {"rowcount": total, "committed": True}
+    except DbBuilderError:
+        raise
+    except Exception as e:
+        raise DbBuilderError(f"배치 실행 실패 — 전체 롤백되었습니다: {e}")
 
 # LLM 호출 (NL2SQL)
 
