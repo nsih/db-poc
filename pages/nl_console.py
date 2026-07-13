@@ -83,15 +83,24 @@ st.markdown("---")
 if kind == "select":
     if st.button("▶ 조회 실행", type="primary"):
         for k in ("nl_df", "nl_df_orig", "nl_target_table",
-                  "nl_update_sqls", "nl_update_pending", "nl_save_as"):
+                "nl_update_sqls", "nl_update_pending", "nl_save_as"):
             st.session_state.pop(k, None)
         st.session_state["nl_edit_gen"] = st.session_state.get("nl_edit_gen", 0) + 1
         try:
             df = db_builder.run_select(engine, edited_sql, limit=20000)
             st.session_state["nl_df"]      = df
             st.session_state["nl_df_orig"] = df.copy()
-            m = re.search(r"FROM\s+`?(\w+)`?", edited_sql.rstrip().rstrip(";"), re.IGNORECASE)
-            st.session_state["nl_target_table"] = m.group(1) if m else None
+
+            # 단일 테이블 단순 조회만 편집 허용.
+            # JOIN / 서브쿼리 / 집계 / DISTINCT 결과는 UPDATE 대상 행을
+            # 특정할 수 없으므로 편집 차단 (target_table=None → 읽기 전용 표시)
+            sql_body = edited_sql.rstrip().rstrip(";")
+            if re.search(r'\b(JOIN|GROUP\s+BY|UNION|DISTINCT)\b|\(\s*SELECT\b',
+                        sql_body, re.IGNORECASE):
+                st.session_state["nl_target_table"] = None
+            else:
+                m = re.search(r"FROM\s+`?(\w+)`?", sql_body, re.IGNORECASE)
+                st.session_state["nl_target_table"] = m.group(1) if m else None
         except db_builder.DbBuilderError as e:
             st.error(f"조회 실패: {e}")
 

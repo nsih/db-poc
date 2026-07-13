@@ -424,7 +424,9 @@ def infer_column_types(df: pd.DataFrame) -> dict[str, str]:
     result: dict[str, str] = {}
     for col in df.columns:
         converted = pd.to_numeric(df[col], errors='coerce')
-        if converted.notna().sum() > 0 and df[col].notna().sum() > 0:
+        non_null  = df[col].notna().sum()
+        # 비어있지 않은 값이 존재하고, 그 전부가 숫자 변환에 성공한 경우만 숫자형
+        if non_null > 0 and converted.notna().sum() == non_null:
             if (converted.dropna() % 1 == 0).all():
                 result[col] = "BIGINT"
             else:
