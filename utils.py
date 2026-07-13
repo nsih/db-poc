@@ -8,21 +8,22 @@ def load_engine():
     return db_builder.get_engine()
 
 
-def auto_select(engine, sql: str) -> None:
-    """쓰기 실행 완료 후 대상 테이블을 자동 조회해 현재 상태를 표시한다.
-    DROP TABLE이면 조회할 테이블이 없으므로 스킵한다.
-    """
+def extract_target_table(sql: str) -> str | None:
     if re.search(r'\bDROP\s+TABLE\b', sql, re.IGNORECASE):
-        return
+        return None
 
     m = re.search(
         r'\b(?:INTO|TABLE|FROM|UPDATE)\s+`?(\w+)`?',
         sql, re.IGNORECASE
     )
-    if not m:
+    return m.group(1) if m else None
+
+
+def auto_select(engine, sql: str) -> None:
+    table = extract_target_table(sql)
+    if not table:
         return
 
-    table = m.group(1)
     try:
         df = db_builder.run_select(engine, f"SELECT * FROM `{table}`", limit=50)
         st.markdown(f"#### 📋 `{table}` 현재 상태 (최대 50행)")
@@ -49,4 +50,4 @@ def reset_pdf_state() -> None:
 def reset_all() -> None:
     reset_nl_state()
     reset_pdf_state()
-    st.session_state.pop("quick_view_table", None)  # 추가
+    st.session_state.pop("quick_view_table", None)

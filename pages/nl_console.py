@@ -1,7 +1,7 @@
 import streamlit as st
 import re
 import db_builder
-from utils import load_engine, auto_select, reset_nl_state, reset_all
+from utils import load_engine, auto_select, extract_target_table, reset_nl_state, reset_all
 
 engine = load_engine()
 
@@ -94,7 +94,6 @@ if kind == "select":
             st.session_state["nl_target_table"] = m.group(1) if m else None
         except db_builder.DbBuilderError as e:
             st.error(f"조회 실패: {e}")
-            # 
 
     if "nl_df" not in st.session_state:
         st.stop()
@@ -121,7 +120,6 @@ if kind == "select":
         with btn_col1:
             if st.button("변경 반영", use_container_width=True):
                 st.session_state.pop("nl_save_as", None)
-
                 try:
                     update_sqls = db_builder.build_update_sqls(
                         df_orig, edited_df, target_table
@@ -187,7 +185,6 @@ if kind == "select":
             "새 테이블명", placeholder="예) ip_table_backup",
             key="nl_save_as_name"
         )
-        
         if_exists = "fail"
         if new_table_name and new_table_name in existing_tables:
             st.warning(f"`{new_table_name}` 테이블이 이미 존재합니다.")
@@ -274,10 +271,11 @@ elif kind in ("ddl", "dml"):
                 if st.button("예, 실행", type="primary", use_container_width=True):
                     try:
                         result = db_builder.run_write(engine, edited_sql, commit=True)
-                        st.success(f"실행 완료 (영향 행: {result['rowcount']})")
                         st.session_state.pop("nl_pending_commit", None)
                         st.session_state["nl_done"] = True
-                        auto_select(engine, edited_sql)
+                        st.session_state["nl_post_update_target"] = \
+                            extract_target_table(edited_sql)
+                        st.session_state["nl_last_rowcount"] = result["rowcount"]
                         st.rerun()
                     except db_builder.DbBuilderError as e:
                         st.error(f"실행 실패: {e}")
