@@ -240,11 +240,12 @@ def run_write(engine: Engine, sql: str, commit: bool = False) -> dict:
     except Exception as e:
         raise DbBuilderError(f"쓰기 실행 실패: {e}")
 
-def run_write_batch(engine: Engine, sqls: list[str]) -> dict:
-    if not sqls:
+def run_write_batch(engine: Engine, items: list[dict]) -> dict:
+    if not items:
         raise DbBuilderError("실행할 SQL이 없습니다.")
 
-    for sql in sqls:
+    for item in items:
+        sql = item.get("exec_sql", "")
         guard_sql(sql, allow_write=True)
         if classify_sql(sql) != "dml":
             raise DbBuilderError(
@@ -254,8 +255,11 @@ def run_write_batch(engine: Engine, sqls: list[str]) -> dict:
     total = 0
     try:
         with engine.begin() as conn:
-            for sql in sqls:
-                result = conn.execute(text(sql))
+            for item in items:
+                result = conn.execute(
+                    text(item["exec_sql"]),
+                    item.get("params") or {},
+                )
                 if result.rowcount is not None and result.rowcount > 0:
                     total += result.rowcount
         return {"rowcount": total, "committed": True}
@@ -528,34 +532,58 @@ def build_update_sqls(original: pd.DataFrame,
         if (orig_row.astype(str) == edit_row.astype(str)).all():
             continue
 
-        set_parts = []
+        params: dict = {}
+        p_seq = 0
+
+        def _bind(val) -> str:
+            nonlocal p_seq
+            key = f"p{p_seq}"
+            p_seq += 1
+            params[key] = str(val)
+            return f":{key}"
+
+        def _display(val) -> str:
+            escaped = str(val).replace("'", "''")
+            return f"'{escaped}'"
+
+        set_disp, set_exec = [], []
         for col in cols:
             if str(orig_row[col]) != str(edit_row[col]):
                 val = edit_row[col]
                 if pd.isna(val):
-                    set_parts.append(f"`{col}` = NULL")
+                    set_disp.append(f"`{col}` = NULL")
+                    set_exec.append(f"`{col}` = NULL")
                 else:
-                    escaped = str(val).replace("'", "''")
-                    set_parts.append(f"`{col}` = '{escaped}'")
+                    set_disp.append(f"`{col}` = {_display(val)}")
+                    set_exec.append(f"`{col}` = {_bind(val)}")
 
-        where_parts = []
+        where_disp, where_exec = [], []
         for col in cols:
             val = orig_row[col]
             if pd.isna(val):
-                where_parts.append(f"`{col}` IS NULL")
+                where_disp.append(f"`{col}` IS NULL")
+                where_exec.append(f"`{col}` IS NULL")
             else:
-                escaped = str(val).replace("'", "''")
-                where_parts.append(f"`{col}` = '{escaped}'")
+                where_disp.append(f"`{col}` = {_display(val)}")
+                where_exec.append(f"`{col}` = {_bind(val)}")
 
-        sql = (f"UPDATE `{table}` "
-               f"SET {', '.join(set_parts)} "
-               f"WHERE {' AND '.join(where_parts)}")
+        display_sql = (f"UPDATE `{table}` "
+                       f"SET {', '.join(set_disp)} "
+                       f"WHERE {' AND '.join(where_disp)}")
+        exec_sql    = (f"UPDATE `{table}` "
+                       f"SET {', '.join(set_exec)} "
+                       f"WHERE {' AND '.join(where_exec)}")
 
         dup_count = (original.astype(str) == orig_row.astype(str)).all(axis=1).sum()
         warning   = (f"원본에 동일한 행이 {dup_count}개 존재 — WHERE 조건이 복수 행에 적용될 수 있습니다."
                      if dup_count > 1 else None)
 
-        results.append({"sql": sql, "warning": warning})
+        results.append({
+            "sql":      display_sql,
+            "exec_sql": exec_sql,
+            "params":   params,
+            "warning":  warning,
+        })
 
     return results
 

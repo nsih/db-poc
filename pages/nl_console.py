@@ -158,9 +158,7 @@ if kind == "select":
             with c1:
                 if st.button("예, 실행", type="primary", use_container_width=True):
                     try:
-                        result = db_builder.run_write_batch(
-                            engine, [item["sql"] for item in update_sqls]
-                        )
+                        result = db_builder.run_write_batch(engine, update_sqls)
                         st.session_state.pop("nl_update_sqls", None)
                         st.session_state.pop("nl_update_pending", None)
                         st.session_state["nl_done"] = True
