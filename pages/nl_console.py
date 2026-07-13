@@ -40,7 +40,8 @@ if submitted and question.strip():
 
 # nl_done이 True면 완료 처리 후 st.stop()
 if st.session_state.get("nl_done"):
-    st.success("작업 완료")
+    rc = st.session_state.get("nl_last_rowcount")
+    st.success(f"작업 완료 (영향 행: {rc}행)" if rc is not None and rc >= 0 else "작업 완료")
 
     target = st.session_state.get("nl_post_update_target")
     if target:
