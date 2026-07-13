@@ -11,6 +11,8 @@ import pandas as pd
 import requests
 import sqlparse
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import BigInteger, Integer, Float, Text, String, Date, DateTime
+from sqlalchemy.dialects.mysql import DOUBLE as MYSQL_DOUBLE, TINYINT as MYSQL_TINYINT
 from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -406,12 +408,56 @@ def infer_column_types(df: pd.DataFrame) -> dict[str, str]:
     return result
 
 
+# UI 타입 문자열 → SQLAlchemy 타입 객체 매핑
+# file_table.py의 _SQL_TYPE_OPTIONS와 1:1 대응해야 한다.
+_SQL_TYPE_TO_SA = {
+    "TEXT":         Text(),
+    "BIGINT":       BigInteger(),
+    "INT":          Integer(),
+    "DOUBLE":       MYSQL_DOUBLE(),
+    "FLOAT":        Float(),
+    "TINYINT(1)":   MYSQL_TINYINT(display_width=1),
+    "DATE":         Date(),
+    "DATETIME":     DateTime(),
+    "VARCHAR(255)": String(255),
+}
+
+
+def _build_sa_dtype(df: pd.DataFrame,
+                    col_types: dict[str, str] | None) -> dict | None:
+    """UI에서 지정한 타입 문자열 dict를 to_sql용 SQLAlchemy 타입 dict로 변환.
+
+    - df에 실제 존재하는 컬럼만 포함 (검수 단계에서 컬럼명이 바뀐 경우 방어)
+    - 매핑에 없는 타입 문자열은 Text로 폴백
+    - col_types가 None이거나 유효 항목이 없으면 None 반환 → to_sql 기본 추론 사용
+    """
+    if not col_types:
+        return None
+
+    dtype: dict = {}
+    for col, type_str in col_types.items():
+        if col not in df.columns:
+            logger.warning(f"col_types의 컬럼 '{col}'이 DataFrame에 없음 — 스킵")
+            continue
+        dtype[col] = _SQL_TYPE_TO_SA.get(type_str, Text())
+
+    return dtype or None
+
+
 def load_dataframe(engine: Engine, df: pd.DataFrame,
-                   table: str, if_exists: str = "fail") -> int:
+                   table: str, if_exists: str = "fail",
+                   col_types: dict[str, str] | None = None) -> int:
+    """DataFrame을 MySQL 테이블로 적재.
+
+    col_types: UI에서 지정한 {컬럼명: 타입문자열} — 테이블 신규 생성/replace 시
+    CREATE TABLE 컬럼 타입으로 사용된다. append 경로에서는 기존 스키마가 우선.
+    """
     if df.empty:
         raise DbBuilderError("적재할 데이터가 없습니다 (DataFrame이 비어 있음).")
     
     df = df.replace({"": None, "nan": None, "None": None})
+
+    dtype = _build_sa_dtype(df, col_types)
 
     try:
         written = df.to_sql(
@@ -420,9 +466,11 @@ def load_dataframe(engine: Engine, df: pd.DataFrame,
             if_exists=if_exists,
             index=False,
             chunksize=500,
+            dtype=dtype,
         )
         count = written if written is not None else len(df)
-        logger.info(f"load_dataframe 완료: {table} {count}행")
+        logger.info(f"load_dataframe 완료: {table} {count}행"
+                    + (f" (타입 지정 {len(dtype)}개 컬럼)" if dtype else ""))
         return count
     except Exception as e:
         raise DbBuilderError(f"테이블 적재 실패 ({table}): {e}")

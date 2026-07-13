@@ -274,7 +274,8 @@ elif step == "confirm_load":
             with st.spinner("적재 중..."):
                 try:
                     cnt = db_builder.load_dataframe(
-                        engine, df, table, if_exists=if_exists
+                        engine, df, table, if_exists=if_exists,
+                        col_types=pending.get("col_types"),
                     )
                     st.success(f"`{table}` 테이블에 {cnt}행 적재 완료")
                     try:

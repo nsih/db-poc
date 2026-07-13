@@ -94,6 +94,7 @@ if kind == "select":
             st.session_state["nl_target_table"] = m.group(1) if m else None
         except db_builder.DbBuilderError as e:
             st.error(f"조회 실패: {e}")
+            # 
 
     if "nl_df" not in st.session_state:
         st.stop()
@@ -120,6 +121,7 @@ if kind == "select":
         with btn_col1:
             if st.button("변경 반영", use_container_width=True):
                 st.session_state.pop("nl_save_as", None)
+
                 try:
                     update_sqls = db_builder.build_update_sqls(
                         df_orig, edited_df, target_table
@@ -185,6 +187,7 @@ if kind == "select":
             "새 테이블명", placeholder="예) ip_table_backup",
             key="nl_save_as_name"
         )
+        
         if_exists = "fail"
         if new_table_name and new_table_name in existing_tables:
             st.warning(f"`{new_table_name}` 테이블이 이미 존재합니다.")
