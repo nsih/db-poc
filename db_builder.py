@@ -507,14 +507,6 @@ def load_dataframe(engine: Engine, df: pd.DataFrame,
 
 # 인라인 편집 → UPDATE 생성
 
-def diff_dataframes(original: pd.DataFrame,
-                    edited: pd.DataFrame) -> pd.DataFrame:
-    if original.shape != edited.shape:
-        return pd.DataFrame()
-    changed_mask = ~(original.astype(str) == edited.astype(str)).all(axis=1)
-    return edited[changed_mask]
-
-
 def build_update_sqls(original: pd.DataFrame,
                       edited: pd.DataFrame,
                       table: str) -> list[dict]:
