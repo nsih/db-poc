@@ -140,7 +140,15 @@ _DANGEROUS_PATTERNS = re.compile(
     re.IGNORECASE | re.MULTILINE)
 
 _SHOW_RE = re.compile(r'^\s*(SHOW|DESCRIBE|DESC|EXPLAIN)\b', re.IGNORECASE)
+_CTE_RE = re.compile(r'^\s*WITH\b', re.IGNORECASE)
 
+def _strip_parens(sql: str) -> str:
+    """괄호 내용을 반복 제거해 최상위 토큰만 남긴다 (CTE 본문 제거용)."""
+    prev = None
+    while prev != sql:
+        prev = sql
+        sql = re.sub(r'\([^()]*\)', ' ', sql)
+    return sql
 
 def classify_sql(sql: str) -> str:
     """첫 구문 verb 판별 → 'select' | 'ddl' | 'dml' | 'unknown'."""
@@ -151,6 +159,14 @@ def classify_sql(sql: str) -> str:
     if _SHOW_RE.match(sql):
         return "select"
     
+    if _CTE_RE.match(sql):
+        top = _strip_parens(sql)
+        m = re.search(r'\b(SELECT|UPDATE|DELETE|INSERT)\b', top, re.IGNORECASE)
+        if m:
+            verb = m.group(1).upper()
+            return "select" if verb == "SELECT" else "dml"
+        return "unknown"
+
     try:
         parsed = sqlparse.parse(sql)
         if not parsed:
